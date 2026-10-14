@@ -2,3 +2,5 @@
 __pycache__/
 .venv/
 series/*/episodes/
+.DS_Store
+.pytest_cache/

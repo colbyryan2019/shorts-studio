@@ -1,0 +1,153 @@
+"""Load a series folder: series.yaml, bible, style line, sources, refs and recent episodes."""
+
+from __future__ import annotations
+
+import json
+import re
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Literal
+
+import yaml
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+
+from .errors import PipelineError
+
+SOURCE_SUFFIXES = {".txt", ".md"}
+REF_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
+RECENT_EPISODES = 3
+EPISODE_DIR_RE = re.compile(r"^ep(\d+)$")
+
+
+class SeriesConfig(BaseModel):
+    """series.yaml. Unknown keys are rejected so typos don't silently do nothing."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1)
+    voice_id: str = ""
+    words: tuple[int, int]
+    shots: tuple[int, int]
+    max_genvideo_shots: int = Field(ge=0)
+    end_card_format: str = ""
+    default_motion: Literal["pushin", "rock", "drift"]
+    caption_style: str = ""
+    music_volume_db: float = -20
+    sources_required: bool = True
+    research_max_searches: int = Field(default=5, ge=1, le=20)
+    research_max_fetches: int = Field(default=3, ge=1, le=10)
+    research_guidance: str = ""  # which sources to prefer; a generic default is used if empty
+
+    @model_validator(mode="after")
+    def _check_ranges(self) -> "SeriesConfig":
+        for name in ("words", "shots"):
+            low, high = getattr(self, name)
+            if low < 1 or high < low:
+                raise ValueError(f"{name} must be [min, max] with 1 <= min <= max, got [{low}, {high}]")
+        return self
+
+
+@dataclass
+class Series:
+    name: str
+    path: Path
+    config: SeriesConfig
+    house_rules: str
+    bible: str
+    style_line: str
+    sources: dict[str, str]  # file name -> text
+    refs: list[str]  # ref names (file stems), e.g. "dinghy" for refs/dinghy.png
+    recent_scripts: dict[int, dict] = field(default_factory=dict)  # episode number -> script.json
+
+    @property
+    def episodes_dir(self) -> Path:
+        return self.path / "episodes"
+
+
+def episode_dir_name(episode: int) -> str:
+    return f"ep{episode:02d}"
+
+
+def _read_required(path: Path, what: str) -> str:
+    if not path.is_file():
+        raise PipelineError(f"Missing {what}: {path}")
+    text = path.read_text(encoding="utf-8").strip()
+    if not text:
+        raise PipelineError(f"{what} is empty: {path}")
+    return text
+
+
+def load_config(path: Path) -> SeriesConfig:
+    if not path.is_file():
+        raise PipelineError(f"Missing series config: {path}")
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as e:
+        raise PipelineError(f"{path} is not valid YAML:\n{e}") from e
+    if not isinstance(raw, dict):
+        raise PipelineError(f"{path} must be a mapping of settings")
+    try:
+        return SeriesConfig.model_validate(raw)
+    except ValidationError as e:
+        lines = [f"  - {'.'.join(str(p) for p in err['loc']) or '(top level)'}: {err['msg']}" for err in e.errors()]
+        raise PipelineError(f"{path} has invalid settings:\n" + "\n".join(lines)) from e
+
+
+def _load_sources(folder: Path) -> dict[str, str]:
+    if not folder.is_dir():
+        return {}
+    sources = {}
+    for f in sorted(folder.iterdir()):
+        if f.is_file() and f.suffix.lower() in SOURCE_SUFFIXES and not f.name.startswith("."):
+            text = f.read_text(encoding="utf-8").strip()
+            if text:
+                sources[f.name] = text
+    return sources
+
+
+def _load_refs(folder: Path) -> list[str]:
+    if not folder.is_dir():
+        return []
+    return sorted(
+        f.stem for f in folder.iterdir()
+        if f.is_file() and f.suffix.lower() in REF_SUFFIXES and not f.name.startswith(".")
+    )
+
+
+def _load_recent_scripts(episodes_dir: Path, before: int) -> dict[int, dict]:
+    """script.json of the last RECENT_EPISODES episodes numbered below `before`."""
+    if not episodes_dir.is_dir():
+        return {}
+    found = []
+    for d in episodes_dir.iterdir():
+        m = EPISODE_DIR_RE.match(d.name)
+        if m and int(m.group(1)) < before and (d / "script.json").is_file():
+            found.append((int(m.group(1)), d / "script.json"))
+    recent = {}
+    for number, path in sorted(found)[-RECENT_EPISODES:]:
+        try:
+            recent[number] = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as e:
+            raise PipelineError(f"Earlier episode script is not valid JSON: {path}\n{e}") from e
+    return recent
+
+
+def load_series(name: str, root: Path, episode: int) -> Series:
+    series_root = root / "series"
+    path = series_root / name
+    if not path.is_dir():
+        available = sorted(p.name for p in series_root.iterdir() if p.is_dir()) if series_root.is_dir() else []
+        hint = f" Available: {', '.join(available)}" if available else ""
+        raise PipelineError(f"Series '{name}' not found at {path}.{hint}")
+
+    return Series(
+        name=name,
+        path=path,
+        config=load_config(path / "series.yaml"),
+        house_rules=_read_required(root / "house_rules.md", "house rules"),
+        bible=_read_required(path / "bible.md", "series bible"),
+        style_line=_read_required(path / "style_line.txt", "style line"),
+        sources=_load_sources(path / "sources"),
+        refs=_load_refs(path / "refs"),
+        recent_scripts=_load_recent_scripts(path / "episodes", before=episode),
+    )

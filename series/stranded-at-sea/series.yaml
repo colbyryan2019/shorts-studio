@@ -1,0 +1,14 @@
+title: Stranded at Sea
+voice_id: ""                 # paste your ElevenLabs narrator voice ID here (milestone 3)
+words: [90, 110]
+shots: [8, 12]
+max_genvideo_shots: 2
+end_card_format: "DAY {day} · WATER: {water}"
+default_motion: rock
+caption_style: bold_white_outline
+music_volume_db: -20
+sources_required: true
+research_guidance: >-
+  Prefer official survival manuals and guides: US Army FM 21-76 / ATP 3-50.21, US Coast Guard,
+  military sea-survival training, and medical sources on dehydration and exposure.
+  Public-domain manuals are ideal. Avoid forums, listicles and AI-generated content.

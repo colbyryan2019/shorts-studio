@@ -21,8 +21,9 @@ class Passage:
     url: str
     title: str
     text: str
-    pages: str = ""  # e.g. "p. 12-13" for PDFs
-    verified: bool = True  # False when the text couldn't be matched to the fetched page
+    pages: str = ""  # e.g. "PDF page 12-13": pages of the PDF file, not the printed page numbers
+    verified: bool = True  # False when we can't be sure which fetched page the quote came from
+    snippet: bool = False  # True for search-result snippets (the page itself wasn't read)
 
 
 @dataclass
@@ -31,16 +32,18 @@ class ResearchResult:
     notes: str  # Claude's own summary; shown to the user, never saved as a source
     searches: int = 0
     fetches: int = 0
-    input_tokens: int = 0
+    input_tokens: int = 0  # all input, including cache reads
+    cached_input_tokens: int = 0  # the part read from cache, billed at about a tenth of the normal rate
     output_tokens: int = 0
     failed_urls: list[str] = field(default_factory=list)
+    pdf_urls: list[str] = field(default_factory=list)  # PDFs are read in full; max_content_tokens doesn't cap them
 
 
 @dataclass
 class ResearchLimits:
     max_searches: int = 5
     max_fetches: int = 3
-    max_content_tokens: int = 10000  # per fetched page; keeps cost predictable
+    max_content_tokens: int = 10000  # per fetched text page; the API doesn't apply it to PDFs
 
 
 class LLMClient(Protocol):
@@ -98,10 +101,15 @@ class AnthropicClient:
         blocks = []
         result = ResearchResult(passages=[], notes="")
         for _ in range(MAX_CONTINUATIONS):
-            response = self._create(system=system, messages=messages, tools=tools)
+            # The server re-reads the whole conversation (every fetched page) after each search or fetch.
+            # Caching makes those re-reads cost about a tenth; the server adds cache points after tool results.
+            response = self._create(system=system, messages=messages, tools=tools,
+                                    cache_control={"type": "ephemeral"})
             blocks.extend(response.content)
             usage = response.usage
-            result.input_tokens += usage.input_tokens + (usage.cache_read_input_tokens or 0) + (usage.cache_creation_input_tokens or 0)
+            cached = usage.cache_read_input_tokens or 0
+            result.input_tokens += usage.input_tokens + cached + (usage.cache_creation_input_tokens or 0)
+            result.cached_input_tokens += cached
             result.output_tokens += usage.output_tokens
             if usage.server_tool_use:
                 result.searches += usage.server_tool_use.web_search_requests or 0
@@ -143,6 +151,8 @@ def _collect(blocks: list, result: ResearchResult) -> None:
                 doc = b.content.content
                 text = doc.source.data if getattr(doc.source, "type", "") == "text" else None
                 docs.append((b.content.url, doc.title or b.content.url, text))
+                if text is None:
+                    result.pdf_urls.append(b.content.url)
             else:
                 result.failed_urls.append(f"(fetch failed: {b.content.error_code})")
 
@@ -157,22 +167,37 @@ def _collect(blocks: list, result: ResearchResult) -> None:
                 continue
             seen.add(text)
             if c.type == "web_search_result_location":
-                result.passages.append(Passage(url=c.url, title=c.title or c.url, text=text))
-            elif c.type in ("char_location", "page_location"):
-                pages = ""
-                if c.type == "page_location":
-                    pages = f"p. {c.start_page_number}" + (
-                        f"-{c.end_page_number - 1}" if c.end_page_number - 1 > c.start_page_number else "")
-                url, title, verified = _find_document(docs, c.document_index, c.cited_text)
+                if text.endswith(("...", "\u2026")):
+                    continue  # search snippets are capped at ~150 characters; a cut-off quote is useless
+                result.passages.append(Passage(url=c.url, title=c.title or c.url, text=text, snippet=True))
+            elif c.type == "char_location":
+                url, title, verified = _find_text_document(docs, c.document_index, c.cited_text)
+                result.passages.append(Passage(url=url, title=title, text=text, verified=verified))
+            elif c.type == "page_location":
+                last = c.end_page_number - 1  # end is exclusive
+                pages = f"PDF page {c.start_page_number}" + (f"-{last}" if last > c.start_page_number else "")
+                url, title, verified = _find_pdf_document(docs, c.document_index)
                 result.passages.append(Passage(url=url, title=title, text=text, pages=pages, verified=verified))
     result.notes = "".join(notes).strip()
 
 
-def _find_document(docs: list, index: int, cited: str) -> tuple[str, str, bool]:
-    """Prefer the fetched page whose text contains the quote; fall back to the citation's index."""
+def _find_text_document(docs: list, index: int, cited: str) -> tuple[str, str, bool]:
+    """The fetched text page that contains the quote; else fall back to the citation's index, unverified."""
     for url, title, text in docs:
         if text and cited.strip() and cited.strip() in text:
             return url, title, True
+    return _by_index(docs, index)
+
+
+def _find_pdf_document(docs: list, index: int) -> tuple[str, str, bool]:
+    """PDF text isn't returned as plain text, so a page citation is certain only if one PDF was read."""
+    pdfs = [(url, title) for url, title, text in docs if text is None]
+    if len(pdfs) == 1:
+        return pdfs[0][0], pdfs[0][1], True
+    return _by_index(docs, index)
+
+
+def _by_index(docs: list, index: int) -> tuple[str, str, bool]:
     if 0 <= index < len(docs):
         return docs[index][0], docs[index][1], False
     return "(unknown page)", "Unknown source", False
@@ -250,3 +275,13 @@ FAKE_PASSAGES = [
     {"url": "https://example.invalid/fake-survival-manual", "title": "FAKE SOURCE (from --fake-llm)",
      "text": "FAKE: Without water a person may survive about three days. Shade and stillness reduce sweating."},
 ]
+
+# Canned refs.yaml proposal for --fake-llm in make_refs.py.
+FAKE_REFS = json.dumps({"refs": [
+    {"name": "survivor",
+     "description": "A faceless stick figure in a wide-brim hat, drawn with simple black lines.",
+     "keywords": ["survivor", "stick figure", "figure"]},
+    {"name": "dinghy",
+     "description": "A small rounded inflatable dinghy, plain outline, flat muted grey.",
+     "keywords": ["dinghy", "boat", "raft"]},
+]})

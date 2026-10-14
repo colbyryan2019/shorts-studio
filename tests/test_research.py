@@ -4,7 +4,7 @@ import pytest
 
 import research
 from pipeline.errors import PipelineError
-from pipeline.llm import FakeLLMClient, Passage, ResearchResult, _collect
+from pipeline.llm import AnthropicClient, FakeLLMClient, Passage, ResearchLimits, ResearchResult, _collect
 from pipeline.research import build_system, format_source_file, run_research
 from pipeline.series import load_series
 
@@ -65,7 +65,7 @@ def test_source_file_groups_by_page_and_flags_unverified():
     assert text.startswith("# Research: Topic line\n")
     assert text.count("## Page A") == 1
     assert "> Quote one.\n" in text
-    assert "> Quote two. (p. 4; not matched to page text: check the link)" in text
+    assert "> Quote two. (p. 4; couldn't confirm which page this came from: check the link)" in text
     assert "REVIEW BEFORE USE" in text
 
 
@@ -101,3 +101,65 @@ def test_cli_saves_to_sources_and_refuses_overwrite(project, series_dir, capsys)
 def test_cli_fake_llm_never_writes_sources(project, series_dir):
     assert research.run(["--series", "test-series", "--topic", "rain", "--fake-llm"], root=project) == 0
     assert sorted(p.name for p in (series_dir / "sources").iterdir()) == ["survival-manual.txt"]
+
+
+def pdf_result(url):
+    doc = NS(title=None, source=NS(type="base64", data="JVBERi0..."))
+    return NS(type="web_fetch_tool_result", content=NS(type="web_fetch_result", url=url, content=doc))
+
+
+def page_cite(quote, index, start, end):
+    return NS(type="page_location", cited_text=quote, document_index=index,
+              start_page_number=start, end_page_number=end)
+
+
+def search_cite(quote, url):
+    return NS(type="web_search_result_location", cited_text=quote, url=url, title="T")
+
+
+def test_single_pdf_quotes_are_attributed_with_page_numbers():
+    blocks = [
+        fetch_result("https://a.example", "Page A", "Some text."),
+        pdf_result("https://manual.example/fm.pdf"),
+        cited("x", page_cite("Do not drink seawater.", 0, 176, 177), page_cite("Rest.", 1, 16, 18)),
+    ]
+    result = ResearchResult(passages=[], notes="")
+    _collect(blocks, result)
+    assert [(p.url, p.pages, p.verified) for p in result.passages] == [
+        ("https://manual.example/fm.pdf", "PDF page 176", True),
+        ("https://manual.example/fm.pdf", "PDF page 16-17", True),
+    ]
+
+
+def test_two_pdfs_fall_back_to_index_unverified():
+    blocks = [pdf_result("https://one.example/a.pdf"), pdf_result("https://two.example/b.pdf"),
+              cited("x", page_cite("Quote.", 1, 3, 4))]
+    result = ResearchResult(passages=[], notes="")
+    _collect(blocks, result)
+    assert (result.passages[0].url, result.passages[0].verified) == ("https://two.example/b.pdf", False)
+
+
+def test_search_snippets_kept_and_marked_unless_cut_off():
+    blocks = [cited("x", search_cite("Kidneys can't make urine saltier than seawater.", "https://noaa.example"),
+                    search_cite("humans can stay alive 3 minutes with...", "https://news.example"))]
+    result = ResearchResult(passages=[], notes="")
+    _collect(blocks, result)
+    assert [(p.url, p.snippet) for p in result.passages] == [("https://noaa.example", True)]
+
+
+def test_pdfs_are_recorded_so_the_cli_can_warn():
+    result = ResearchResult(passages=[], notes="")
+    _collect([fetch_result("https://a.example", "A", "text"), pdf_result("https://m.example/fm.pdf")], result)
+    assert result.pdf_urls == ["https://m.example/fm.pdf"]
+
+
+def test_research_requests_use_caching_and_count_cache_reads():
+    usage = NS(input_tokens=1000, cache_read_input_tokens=90000, cache_creation_input_tokens=5000,
+               output_tokens=200, server_tool_use=NS(web_search_requests=2, web_fetch_requests=1))
+    response = NS(content=[cited("brief")], usage=usage, stop_reason="end_turn")
+    calls = []
+    client = AnthropicClient(api_key="test", model="m")
+    client._create = lambda **kw: calls.append(kw) or response
+    result = client.research("sys", "prompt", ResearchLimits())
+    assert calls[0]["cache_control"] == {"type": "ephemeral"}
+    assert (result.input_tokens, result.cached_input_tokens) == (96000, 90000)

@@ -2,7 +2,7 @@
 
 Turns a short episode outline into a finished vertical video, for any number of series. The design is in [SPEC.md](SPEC.md).
 
-**Status:** milestones 1 and 1b (research, then the script step with review and approval).
+**Status:** milestones 1, 1b and 2: research, the script (with review and approval), reference images and shot images.
 
 ## Setup
 
@@ -20,6 +20,8 @@ Then fill in `.env` (never commit it):
 ```
 ANTHROPIC_API_KEY=sk-ant-...
 LLM_MODEL=claude-sonnet-5-5
+OPENAI_API_KEY=sk-...
+IMAGE_MODEL=gpt-image-2.5-sunburst
 ```
 
 Keys are read only from `.env`; shell environment variables are ignored.
@@ -67,6 +69,34 @@ Every new script starts as a **draft**. Later steps (images, voice, video) won't
 - Every revise or redo keeps the previous script as `script.v1.json`, `script.v2.json`, ...
 - Approval is tied to the exact contents of `script.json`. Any edit after approving puts it back in draft.
 - If a generated script breaks the series limits (word count, shot count, genvideo cap, unknown refs or sources), Claude is asked once to fix it. If it fails again, the run stops and lists the problems.
+
+## Reference images (consistent characters)
+
+Each series keeps one picture of every recurring character or object in `refs/`, and every shot that shows it is drawn from that picture.
+
+```sh
+python make_refs.py --series stranded-at-sea                    # Claude proposes refs/refs.yaml from the bible
+python make_refs.py --series stranded-at-sea --generate --dry-run   # what it would draw, and rough cost
+python make_refs.py --series stranded-at-sea --generate         # 3 candidates per ref in refs/candidates/
+python make_refs.py --series stranded-at-sea --pick survivor 2  # use candidate 2 as refs/survivor.png
+```
+
+- Edit `refs/refs.yaml` freely before generating. `keywords` are the words that mean a shot shows that thing.
+- Once a ref is picked, any shot whose `image_prompt` uses one of its keywords must list it in `refs`, or the script fails its checks. For a script written earlier, run `--revise "add the refs"`, then `--approve` again.
+
+## Images
+
+Once the script is approved, running `make_episode.py` again draws one image per shot into `episodes/epNN/images/`.
+
+```sh
+python make_episode.py --series stranded-at-sea --episode 1 --dry-run   # which images, and rough cost
+python make_episode.py --series stranded-at-sea --episode 1             # draw them
+python make_episode.py --series stranded-at-sea --episode 1 --redo 5    # redraw shot 5
+```
+
+- Re-running only redraws shots whose inputs changed: the image prompt, the style line, a reference image, the model or the quality. Editing one shot's `image_prompt` costs one image.
+- Quality is `image_quality` in `series.yaml` (`low`, `medium`, `high`). For stick figures, `low` may be enough and is much cheaper.
+- `--fake-images` draws labeled placeholders for free.
 
 ## Tests
 

@@ -1,8 +1,9 @@
-"""Turn an episode outline into a vertical video. Milestone 1: the script step, with review and approval.
+"""Turn an episode outline into a vertical video. So far: the script (with review and approval) and images.
 
     python make_episode.py --series stranded-at-sea --episode 1 --outline "..." [--fake-llm]
     python make_episode.py --series stranded-at-sea --episode 1 --revise "make line 4 punchier"
     python make_episode.py --series stranded-at-sea --episode 1 --approve
+    python make_episode.py --series stranded-at-sea --episode 1 [--dry-run] [--redo 5]
 """
 
 from __future__ import annotations
@@ -11,9 +12,11 @@ import argparse
 import sys
 from pathlib import Path
 
-from pipeline.config import PROJECT_ROOT
+from pipeline.config import PROJECT_ROOT, load_settings
 from pipeline.episode import Episode
 from pipeline.errors import PipelineError
+from pipeline.imagegen import FAKE_MODEL, ImageClient, make_image_client
+from pipeline.images import describe_plan, make_images, plan_images
 from pipeline.llm import LLMClient, make_client
 from pipeline.schema import validate_script
 from pipeline.script import format_summary, planned_calls, write_script
@@ -30,6 +33,9 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--revise", metavar="NOTES", help="ask the LLM to revise the current script per these notes")
     p.add_argument("--approve", action="store_true", help="approve the current script so later steps may run")
     p.add_argument("--fake-llm", action="store_true", help="use a canned script instead of calling the Claude API")
+    p.add_argument("--fake-images", action="store_true", help="draw placeholder images instead of calling the image API")
+    p.add_argument("--redo", type=int, action="append", default=[], metavar="N",
+                   help="redraw shot N's image even if it is up to date (repeatable)")
     args = p.parse_args(argv)
 
     if args.episode < 1:
@@ -56,7 +62,8 @@ def make_script_client(args: argparse.Namespace, series: Series, root: Path) -> 
     return client
 
 
-def run(argv: list[str] | None = None, root: Path = PROJECT_ROOT, client: LLMClient | None = None) -> int:
+def run(argv: list[str] | None = None, root: Path = PROJECT_ROOT,
+        client: LLMClient | None = None, image_client: ImageClient | None = None) -> int:
     args = parse_args(argv)
     series = load_series(args.series, root, args.episode)
     ep = Episode.of(series, args.episode)
@@ -105,6 +112,10 @@ def run(argv: list[str] | None = None, root: Path = PROJECT_ROOT, client: LLMCli
             print("\nNot approved: fix the problems above first.")
             return 1
         ep.approve()
+        print()
+        print(format_summary(result.script, series, ep.approval_status(), result.warnings))
+        print("\nApproved. Run again without --approve to make the images (add --dry-run to preview the cost first).")
+        return 0
 
     status = ep.approval_status()
     print()
@@ -119,10 +130,29 @@ def run(argv: list[str] | None = None, root: Path = PROJECT_ROOT, client: LLMCli
             print("(These would wait until the script is approved.)")
         return 1 if result.errors else 0
 
-    if args.dry_run:
-        print(planned_calls(result.script))
+    if result.errors:
+        print("The approved script no longer passes the checks above (for example, refs picked since). "
+              "Fix it with --revise or by hand, then --approve again.")
+        return 1
+
+    if args.fake_images:
+        model = FAKE_MODEL
     else:
-        print("Script approved. Images, voice and video arrive in later milestones; nothing else to do yet.")
+        model = image_client.model if image_client else load_settings(root).image_model
+    plans = plan_images(series, ep, result.script, model, set(args.redo))
+    print(describe_plan(plans, series.config.image_quality))
+    if args.dry_run:
+        print("\n(--dry-run: nothing drawn.) Voice and video arrive in later milestones.")
+        return 0
+
+    if any(p.reason for p in plans):
+        images = image_client or make_image_client(args.fake_images, root, series.config.image_quality)
+        print(f"\nDrawing with {images.model}...")
+        total = make_images(images, series, ep, plans)
+        if total is not None:
+            print(f"Image cost this run: ${total:.2f}")
+    print(f"\nImages are in {ep.path / 'images'}. Look them over; --redo N redraws one shot, and editing a "
+          "shot's image_prompt redraws just that shot next run. Voice and video arrive in later milestones.")
     return 0
 
 

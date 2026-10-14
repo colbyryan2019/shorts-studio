@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from .errors import PipelineError
 
 SOURCE_SUFFIXES = {".txt", ".md"}
+REF_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 REF_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 RECENT_EPISODES = 3
 EPISODE_DIR_RE = re.compile(r"^ep(\d+)$")
@@ -37,6 +38,9 @@ class SeriesConfig(BaseModel):
     research_max_searches: int = Field(default=5, ge=1, le=20)
     research_max_fetches: int = Field(default=3, ge=1, le=10)
     research_guidance: str = ""  # which sources to prefer; a generic default is used if empty
+    image_quality: str = "medium"  # passed to the image model (e.g. low | medium | high)
+    image_size: str = "1152x2048"  # requested size; 9:16 so it scales to 1080x1920 without bars
+    ref_candidates: int = Field(default=3, ge=1, le=6)  # candidates per reference in make_refs.py
 
     @model_validator(mode="after")
     def _check_ranges(self) -> "SeriesConfig":
@@ -45,6 +49,16 @@ class SeriesConfig(BaseModel):
             if low < 1 or high < low:
                 raise ValueError(f"{name} must be [min, max] with 1 <= min <= max, got [{low}, {high}]")
         return self
+
+
+class RefSpec(BaseModel):
+    """One recurring character or object, from refs/refs.yaml."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    description: str = Field(min_length=1)
+    # Words in a shot's image_prompt that mean this ref is in the picture (whole words, any case).
+    keywords: list[str] = Field(min_length=1)
 
 
 @dataclass
@@ -58,10 +72,22 @@ class Series:
     sources: dict[str, str]  # file name -> text
     refs: list[str]  # ref names (file stems), e.g. "dinghy" for refs/dinghy.png
     recent_scripts: dict[int, dict] = field(default_factory=dict)  # episode number -> script.json
+    ref_specs: dict[str, RefSpec] = field(default_factory=dict)  # from refs/refs.yaml, may be empty
 
     @property
     def episodes_dir(self) -> Path:
         return self.path / "episodes"
+
+    @property
+    def refs_dir(self) -> Path:
+        return self.path / "refs"
+
+    def ref_image(self, name: str) -> Path | None:
+        for suffix in sorted(REF_SUFFIXES):
+            path = self.refs_dir / f"{name}{suffix}"
+            if path.is_file():
+                return path
+        return None
 
 
 def episode_dir_name(episode: int) -> str:
@@ -114,6 +140,27 @@ def _load_refs(folder: Path) -> list[str]:
     )
 
 
+def load_ref_specs(path: Path) -> dict[str, RefSpec]:
+    if not path.is_file():
+        return {}
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as e:
+        raise PipelineError(f"{path} is not valid YAML:\n{e}") from e
+    if not isinstance(raw, dict):
+        raise PipelineError(f"{path} must map each ref name to its description and keywords")
+    specs = {}
+    for name, value in raw.items():
+        if not isinstance(name, str) or not REF_NAME_RE.match(name):
+            raise PipelineError(f"{path}: ref name '{name}' must be lowercase letters, digits and dashes")
+        try:
+            specs[name] = RefSpec.model_validate(value)
+        except ValidationError as e:
+            lines = [f"  - {'.'.join(str(p) for p in err['loc'])}: {err['msg']}" for err in e.errors()]
+            raise PipelineError(f"{path}: ref '{name}' is invalid:\n" + "\n".join(lines)) from e
+    return specs
+
+
 def _load_recent_scripts(episodes_dir: Path, before: int) -> dict[int, dict]:
     """script.json of the last RECENT_EPISODES episodes numbered below `before`."""
     if not episodes_dir.is_dir():
@@ -150,4 +197,5 @@ def load_series(name: str, root: Path, episode: int) -> Series:
         sources=_load_sources(path / "sources"),
         refs=_load_refs(path / "refs"),
         recent_scripts=_load_recent_scripts(path / "episodes", before=episode),
+        ref_specs=load_ref_specs(path / "refs" / "refs.yaml"),
     )

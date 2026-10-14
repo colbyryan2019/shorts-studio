@@ -24,6 +24,14 @@ SCHEMA_EXAMPLE = {
 def build_system(series: Series) -> str:
     cfg = series.config
     refs = ", ".join(series.refs) or "(none yet: every shot must use an empty refs list)"
+    ref_rules = ""
+    described = [n for n in series.ref_specs if n in series.refs]
+    if described:
+        ref_rules = "\n- Reference images (list a ref in every shot whose picture shows it; describe it the same way):\n" + "\n".join(
+            f"  - {n}: {series.ref_specs[n].description} "
+            f"(any of these words in image_prompt means it is shown: {', '.join(series.ref_specs[n].keywords)})"
+            for n in described
+        )
     if cfg.sources_required:
         claims_rule = (
             "Every factual claim in the narration must come from the source material below and be listed in "
@@ -46,7 +54,7 @@ def build_system(series: Series) -> str:
         f"- Total narration across all shots: {cfg.words[0]}-{cfg.words[1]} words.\n"
         "- `motion` is one of: pushin, rock, drift, genvideo. "
         f"Use genvideo for at most {cfg.max_genvideo_shots} shots, only where real movement matters most.\n"
-        f"- `refs` lists reference images to keep characters and objects consistent. Allowed names: {refs}.\n"
+        f"- `refs` lists reference images to keep characters and objects consistent. Allowed names: {refs}.{ref_rules}\n"
         f"- `end_card` follows this format: {cfg.end_card_format or '(free text)'}\n"
         "- `image_prompt` describes only the content of the image; the art style is added separately.\n"
         f"- {claims_rule}",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -102,6 +103,21 @@ def validate_script(data: object, series: Series, *, missing_sources_ok: bool = 
                 available = ", ".join(series.refs) or "none (refs/ is empty)"
                 errors.append(f"shot {shot.n}: ref '{ref}' has no image in refs/. Available: {available}")
 
+    for name, spec in series.ref_specs.items():
+        if name not in known_refs:
+            warnings.append(
+                f"ref '{name}' has no picked image yet, so shots showing it may not look consistent. "
+                "See make_refs.py."
+            )
+            continue
+        for shot in script.shots:
+            hit = matching_keyword(shot.image_prompt, spec.keywords)
+            if hit and name not in shot.refs:
+                errors.append(
+                    f"shot {shot.n}: image_prompt mentions '{hit}', so the shot shows the {name}; "
+                    f"add \"{name}\" to its refs"
+                )
+
     if cfg.sources_required:
         known_sources = set(series.sources)
         for i, claim in enumerate(script.claims, start=1):
@@ -111,6 +127,14 @@ def validate_script(data: object, series: Series, *, missing_sources_ok: bool = 
                 (warnings if missing_sources_ok else errors).append(msg)
 
     return ValidationResult(script=script, errors=errors, warnings=warnings)
+
+
+def matching_keyword(text: str, keywords: list[str]) -> str | None:
+    """The first keyword found in text as a whole word or phrase, ignoring case."""
+    for kw in keywords:
+        if kw.strip() and re.search(rf"(?<!\w){re.escape(kw.strip())}(?!\w)", text, re.IGNORECASE):
+            return kw
+    return None
 
 
 def _loc(loc: tuple) -> str:

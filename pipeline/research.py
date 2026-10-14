@@ -26,6 +26,9 @@ def build_system(series: Series) -> str:
         "- Search for the facts the episode needs, then fetch the 2-3 most authoritative pages and read them. "
         f"{series.config.research_guidance or DEFAULT_GUIDANCE}\n"
         "- Only fetch pages that came up in your searches.\n"
+        "- Prefer HTML pages to PDFs. A fetched PDF is read in full, every page, however long it is, "
+        "so a whole manual or report can cost more than all your other reading combined. "
+        "Fetch a PDF only if it is short or no web page states the fact.\n"
         "- Then write a short brief: one line per fact the episode needs, each backed by a direct quote "
         "from a page you fetched. Quote the exact sentences that state the fact.\n"
         "- If the sources disagree, or a fact the outline assumes is wrong or unsupported, say so plainly.",
@@ -60,7 +63,11 @@ def format_source_file(topic: str, result: ResearchResult, model: str) -> str:
     for (url, title), passages in by_page.items():
         lines += ["", f"## {title}", url, ""]
         for p in passages:
-            tags = [t for t in (p.pages, "" if p.verified else "not matched to page text: check the link") if t]
+            tags = [t for t in (
+                p.pages,
+                "search snippet: page not read in full" if p.snippet else "",
+                "" if p.verified else "couldn't confirm which page this came from: check the link",
+            ) if t]
             suffix = f" ({'; '.join(tags)})" if tags else ""
             lines.append(f"> {p.text}{suffix}")
             lines.append("")

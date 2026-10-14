@@ -26,6 +26,7 @@ shorts-studio/
   house_rules.md        # rules every series follows (see below)
   make_episode.py
   research.py
+  make_refs.py
   new_series.py
   pipeline/             # one module per step, no series-specific code
   templates/
@@ -64,6 +65,7 @@ ELEVENLABS_API_KEY=
 FAL_KEY=                 # image-to-video clips
 LLM_MODEL=               # current Claude Sonnet-class model string
 IMAGE_PROVIDER=openai    # openai | fal
+IMAGE_MODEL=             # image model id, e.g. gpt-image-2.5-sunburst
 VIDEO_MODEL=             # fal model id for image-to-video (Veo Lite or Kling class)
 ```
 
@@ -85,6 +87,9 @@ sources_required: true       # every factual claim must cite a file in sources/
 research_max_searches: 5     # optional: web searches per research run
 research_max_fetches: 3      # optional: pages read per research run
 research_guidance: "..."     # optional: which sources to prefer
+image_quality: medium        # optional: passed to the image model
+image_size: "1152x2048"      # optional: requested size, scaled to 1080x1920
+ref_candidates: 3            # optional: candidates per ref in make_refs.py
 ```
 
 `new_series.py` copies `templates/series/` into `series/<name>/` with a blank bible, style line and series.yaml.
@@ -126,15 +131,19 @@ Enforce the series.yaml limits (word count, shot count, genvideo cap). `motion` 
 
 Review: a new script is a draft. `--revise "notes"` sends the current script and notes back to the LLM; `--redo-script` starts over from the saved `outline.txt`. Both keep the previous version as `script.vN.json`. Hand edits to `script.json` are re-validated on every run. `--approve` records the hash of `script.json` in `approved.json`; any later change returns it to draft. Every paid step after the script requires an approved script.
 
-### 2. Images (pipeline/images.py)
+### 2. Reference images (pipeline/refs.py, make_refs.py)
 
-For each shot, prompt = series `style_line.txt` + shot `image_prompt`, sending the listed reference images (use an endpoint that accepts input images). Portrait output, then scale/pad to 1080x1920. Skip shots whose image already exists unless `--redo N` is passed.
+`refs/refs.yaml` lists each recurring character or object with a description and keywords; `make_refs.py` proposes it from the bible with Claude, and the user can edit it. `--generate` draws `ref_candidates` options per ref into `refs/candidates/` (logged in `candidates.json`); `--pick NAME N` copies one to `refs/NAME.png`. Placeholder candidates from `--fake-images` can't be picked. Once a ref has an image, any shot whose `image_prompt` contains one of its keywords (whole words) must list it in `refs`, or the script fails validation; the script prompt includes each ref's description and keywords.
 
-### 3. Narration (pipeline/voice.py)
+### 3. Images (pipeline/images.py)
+
+Only for an approved script that still passes validation. For each shot, prompt = series `style_line.txt` + shot `image_prompt` + an instruction to match the reference images, sending the listed reference images (OpenAI `images.edit`; `images.generate` when a shot has no refs). Requested at `image_size` (9:16), then scaled (and padded if needed) to 1080x1920. `images/manifest.json` records a fingerprint of each image's inputs (prompt, ref image contents, model, quality, size): a re-run redraws only shots whose fingerprint changed, plus any `--redo N`. Cost per image is computed from the returned token usage. `--approve` only approves; drawing happens on the next run.
+
+### 4. Narration (pipeline/voice.py)
 
 ElevenLabs text-to-speech with the series `voice_id`, one request per line, so each line's duration is known exactly. Save `audio/NN.mp3`. Shot duration = line duration + 0.3 s pause (minimum 1.5 s).
 
-### 4. Motion (pipeline/motion.py)
+### 5. Motion (pipeline/motion.py)
 
 Turn each still into a clip of the shot's duration at 1080x1920, 30 fps:
 - `pushin`: slow zoom 100% to 110% (zoompan).
@@ -142,7 +151,7 @@ Turn each still into a clip of the shot's duration at 1080x1920, 30 fps:
 - `drift`: slow horizontal pan across a slightly oversized frame.
 - `genvideo`: send the still to the image-to-video model on fal.ai with a short motion prompt that preserves the art style, trim or loop to duration. If the call fails, fall back to the series `default_motion`.
 
-### 5. Assembly (pipeline/assemble.py)
+### 6. Assembly (pipeline/assemble.py)
 
 - Concatenate the shot clips with hard cuts.
 - Narration track: line audio placed at each shot's start.
@@ -151,7 +160,7 @@ Turn each still into a clip of the shot's duration at 1080x1920, 30 fps:
 - End card: `end_card` text in plain white capitals over the last shot for its final 2 s.
 - Output `final.mp4`, H.264, AAC, 1080x1920, 30 fps.
 
-### 6. Review and cost (pipeline/review.py)
+### 7. Review and cost (pipeline/review.py)
 
 Write `review.md`: title, full narration, the claims with their source files, the motion per shot, and a contact sheet image of all stills. Write `cost.json` with an estimated cost per API call and the episode total; print the total at the end.
 

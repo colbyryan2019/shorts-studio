@@ -15,6 +15,9 @@ class Settings:
     # repr=False so a key never ends up in a log line or traceback by accident.
     anthropic_api_key: str = field(default="", repr=False)
     llm_model: str = ""
+    openai_api_key: str = field(default="", repr=False)
+    image_provider: str = "openai"
+    image_model: str = ""
 
 
 def load_settings(root: Path = PROJECT_ROOT) -> Settings:
@@ -27,4 +30,7 @@ def load_settings(root: Path = PROJECT_ROOT) -> Settings:
     return Settings(
         anthropic_api_key=(values.get("ANTHROPIC_API_KEY") or "").strip(),
         llm_model=(values.get("LLM_MODEL") or "").strip(),
+        openai_api_key=(values.get("OPENAI_API_KEY") or "").strip(),
+        image_provider=(values.get("IMAGE_PROVIDER") or "openai").strip().lower(),
+        image_model=(values.get("IMAGE_MODEL") or "").strip(),
     )

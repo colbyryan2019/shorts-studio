@@ -76,11 +76,14 @@ def run(argv: list[str] | None = None, root: Path = PROJECT_ROOT, client: LLMCli
     unverified = sum(1 for p in result.passages if not p.verified)
     print(f"\nSaved {len(result.passages)} passages from {len(pages)} pages to {out_path}")
     if unverified:
-        print(f"  ! {unverified} passages couldn't be matched to their page text; they're marked in the file.")
+        print(f"  ! {unverified} passages couldn't be tied to a specific page for certain; they're marked in the file.")
     if result.failed_urls:
         print(f"  ! {len(result.failed_urls)} page fetches failed.")
+    for url in result.pdf_urls:
+        print(f"  ! Read a full PDF (no length cap applies, so it drives cost): {url}")
     print(f"Usage: {result.searches} searches, {result.fetches} page reads, "
-          f"{result.input_tokens:,} input tokens, {result.output_tokens:,} output tokens")
+          f"{result.input_tokens:,} input tokens ({result.cached_input_tokens:,} from cache), "
+          f"{result.output_tokens:,} output tokens")
     print("\nClaude's notes (not saved as a source):\n")
     print(result.notes or "(none)")
     print(f"\nNext: open {out_path.name}, check the quotes and links, delete anything you don't trust. "

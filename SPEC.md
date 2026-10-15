@@ -54,7 +54,7 @@ shorts-studio/
   .env                  # API keys only, never committed
 ```
 
-Put `series/` (or each series' `episodes/` folder) inside a Google Drive or OneDrive synced folder, or symlink it there, so finished videos appear on every device.
+The whole `series/` folder is git-ignored: the code is public, series content is not. Put `series/` inside a Google Drive or OneDrive synced folder, or symlink it there, so it is backed up and finished videos appear on every device.
 
 ## Global configuration (.env)
 

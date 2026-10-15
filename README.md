@@ -26,6 +26,8 @@ IMAGE_MODEL=gpt-image-2.5-sunburst
 
 Keys are read only from `.env`; shell environment variables are ignored.
 
+The whole `series/` folder is git-ignored, so each series' bible, sources, refs and episodes stay private while the code is public. Back it up yourself (for example, keep it in a synced Drive folder).
+
 ## Finding sources
 
 When a series has `sources_required: true`, every fact in a script must come from a file in `series/<name>/sources/`. `research.py` fills it for you:
@@ -95,7 +97,7 @@ python make_episode.py --series stranded-at-sea --episode 1 --redo 5    # redraw
 ```
 
 - Re-running only redraws shots whose inputs changed: the image prompt, the style line, a reference image, the model or the quality. Editing one shot's `image_prompt` costs one image.
-- Quality is `image_quality` in `series.yaml` (`low`, `medium`, `high`). For stick figures, `low` may be enough and is much cheaper.
+- Quality is `image_quality` in `series.yaml` (`low`, `medium`, `high`).
 - `--fake-images` draws labeled placeholders for free.
 
 ## Tests

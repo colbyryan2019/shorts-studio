@@ -38,11 +38,51 @@ class GeneratedImage:
     output_tokens: int = 0
 
     def cost(self, model: str) -> float | None:
+        if model == FAKE_MODEL:
+            return 0.0
         rates = TOKEN_RATES.get(model)
         if rates is None:
             return None
         image_in, text_in, out = rates
         return (self.input_image_tokens * image_in + self.input_text_tokens * text_in + self.output_tokens * out) / 1e6
+
+
+@dataclass
+class Budget:
+    """Stops a run before the next image would push spending past the limit.
+
+    The next image is assumed to cost as much as the most expensive one so far this run.
+    """
+
+    model: str
+    limit: float
+    spent: float = 0.0
+    largest: float = 0.0
+
+    def __post_init__(self):
+        if self.model != FAKE_MODEL and self.model not in TOKEN_RATES:
+            raise PipelineError(
+                f"No prices known for image model '{self.model}', so the IMAGE_COST_LIMIT can't be enforced. "
+                "Add its token rates to TOKEN_RATES in pipeline/imagegen.py."
+            )
+
+    def check_next(self) -> None:
+        if self.spent + self.largest > self.limit:
+            raise PipelineError(
+                f"Stopped: ${self.spent:.2f} spent this run, and the next image (~${self.largest:.2f}) would pass "
+                f"the ${self.limit:.2f} limit (IMAGE_COST_LIMIT in .env). Everything drawn so far is saved; "
+                "run the same command again to continue, or raise the limit."
+            )
+
+    def add(self, cost: float | None) -> None:
+        cost = cost or 0.0
+        self.spent += cost
+        self.largest = max(self.largest, cost)
+
+
+def make_budget(model: str, root: Path) -> Budget:
+    limit = load_settings(root).image_cost_limit if model != FAKE_MODEL else float("inf")
+    return Budget(model=model, limit=limit)
 
 
 class ImageClient(Protocol):

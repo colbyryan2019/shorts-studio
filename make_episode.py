@@ -15,7 +15,7 @@ from pathlib import Path
 from pipeline.config import PROJECT_ROOT, load_settings
 from pipeline.episode import Episode
 from pipeline.errors import PipelineError
-from pipeline.imagegen import FAKE_MODEL, ImageClient, make_image_client
+from pipeline.imagegen import FAKE_MODEL, ImageClient, make_budget, make_image_client
 from pipeline.images import describe_plan, make_images, plan_images
 from pipeline.llm import LLMClient, make_client
 from pipeline.schema import validate_script
@@ -148,9 +148,8 @@ def run(argv: list[str] | None = None, root: Path = PROJECT_ROOT,
     if any(p.reason for p in plans):
         images = image_client or make_image_client(args.fake_images, root, series.config.image_quality)
         print(f"\nDrawing with {images.model}...")
-        total = make_images(images, series, ep, plans)
-        if total is not None:
-            print(f"Image cost this run: ${total:.2f}")
+        spent = make_images(images, series, ep, plans, make_budget(images.model, root))
+        print(f"Image cost this run: ${spent:.2f}")
     print(f"\nImages are in {ep.path / 'images'}. Look them over; --redo N redraws one shot, and editing a "
           "shot's image_prompt redraws just that shot next run. Voice and video arrive in later milestones.")
     return 0

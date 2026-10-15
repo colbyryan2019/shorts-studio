@@ -9,7 +9,7 @@ import make_refs
 from pipeline import refs
 from pipeline.episode import Episode
 from pipeline.errors import PipelineError
-from pipeline.imagegen import FakeImageClient, GeneratedImage, fit_to_frame
+from pipeline.imagegen import Budget, FakeImageClient, GeneratedImage, fit_to_frame
 from pipeline.images import make_images, plan_images
 from pipeline.llm import FAKE_REFS, FakeLLMClient
 from pipeline.schema import validate_script
@@ -101,7 +101,7 @@ def test_make_refs_propose_generate_pick(project, series_dir):
     class RealishClient(FakeImageClient):
         pass
 
-    images = RealishClient(model="some-real-model")
+    images = RealishClient(model="gpt-image-2.5-sunburst")
     assert make_refs.run(base + ["--generate", "survivor"], root=project, images=images) == 0
     assert len(images.calls) == 3
     assert (series_dir / "refs" / "candidates" / "survivor-3.png").exists()
@@ -146,7 +146,7 @@ def episode(project, with_refs, good_script):
 def _plan_and_draw(series, ep, client, redo=()):
     script = validate_script(ep.load_script_data(), series).script
     plans = plan_images(series, ep, script, client.model, set(redo))
-    make_images(client, series, ep, plans)
+    make_images(client, series, ep, plans, Budget(client.model, float("inf")))
     return plans
 
 
@@ -207,6 +207,45 @@ def test_cost_from_tokens():
     assert image.cost("unknown-model") is None
 
 
+class PricedClient(FakeImageClient):
+    """A fake that reports real-looking token usage, so budgets can be tested."""
+
+    def generate(self, prompt, size, refs):
+        image = super().generate(prompt, size, refs)
+        image.output_tokens = 10_000  # $0.30 at $30 / 1M
+        return image
+
+
+def test_budget_stops_before_passing_the_limit(episode):
+    series, ep = episode
+    client = PricedClient(model="gpt-image-2.5-sunburst")
+    script = validate_script(ep.load_script_data(), series).script
+    plans = plan_images(series, ep, script, client.model, set())
+    budget = Budget(client.model, limit=1.00)
+    with pytest.raises(PipelineError, match=r"\$0\.90 spent.*\$1\.00 limit"):
+        make_images(client, series, ep, plans, budget)
+    assert len(client.calls) == 3  # 3 x $0.30; a 4th would reach $1.20
+
+    # Progress is kept: the next run only draws what's missing.
+    plans = plan_images(series, ep, script, client.model, set())
+    assert sum(1 for p in plans if p.reason) == 7
+
+
+def test_budget_refuses_unknown_model():
+    with pytest.raises(PipelineError, match="No prices known"):
+        Budget("mystery-model", 2.0)
+
+
+def test_cost_limit_setting(project):
+    from pipeline.config import load_settings
+    assert load_settings(project).image_cost_limit == 2.00
+    (project / ".env").write_text("IMAGE_COST_LIMIT=0.50\n")
+    assert load_settings(project).image_cost_limit == 0.50
+    (project / ".env").write_text("IMAGE_COST_LIMIT=lots\n")
+    with pytest.raises(PipelineError, match="dollar amount"):
+        load_settings(project)
+
+
 # --- make_episode.py --------------------------------------------------------------
 
 def test_cli_images_need_approval_and_approve_stops(episode, project, capsys):
@@ -246,3 +285,42 @@ def test_cli_image_settings_checked_before_drawing(episode, project):
     ep.approve()
     with pytest.raises(PipelineError, match="OPENAI_API_KEY is not set"):
         make_episode.run(["--series", "test-series", "--episode", "1"], root=project)
+
+
+def test_proposed_names_are_normalized(project):
+    from pipeline.refs import propose_refs
+    reply = json.dumps({"refs": [{"name": "Signal Mirror", "description": "A small mirror.", "keywords": ["mirror"]}]})
+    specs = propose_refs(FakeLLMClient([reply]), load_series("test-series", project, 1))
+    assert list(specs) == ["signal-mirror"]
+
+
+def test_refine_from_a_candidate_adds_new_numbers(project, series_dir):
+    base = ["--series", "test-series"]
+    make_refs.run(base, root=project, llm=FakeLLMClient([FAKE_REFS]))
+    images = FakeImageClient(model="gpt-image-2.5-sunburst")
+    make_refs.run(base + ["--generate", "survivor"], root=project, images=images)
+    make_refs.run(base + ["--generate", "survivor", "--from", "2"], root=project, images=images)
+    assert len(images.calls) == 6
+    prompt, _, start = images.calls[3]
+    assert [p.name for p in start] == ["survivor-2.png"] and "starting point" in prompt
+    assert (series_dir / "refs" / "candidates" / "survivor-6.png").exists()
+    log = json.loads((series_dir / "refs" / "candidates" / "candidates.json").read_text())
+    assert log["survivor-4.png"]["from"] == "survivor-2.png"
+
+    with pytest.raises(PipelineError, match="one ref at a time"):
+        make_refs.run(base + ["--generate", "--from", "1"], root=project, images=images)
+
+
+def test_try_a_style_without_changing_the_style_line(project, series_dir):
+    base = ["--series", "test-series"]
+    make_refs.run(base, root=project, llm=FakeLLMClient([FAKE_REFS]))
+    images = FakeImageClient(model="gpt-image-2.5-sunburst")
+    make_refs.run(base + ["--generate", "survivor"], root=project, images=images)
+    make_refs.run(base + ["--generate", "survivor", "--style", "Warm watercolor.", "--count", "1"],
+                  root=project, images=images)
+    assert len(images.calls) == 4
+    prompt = images.calls[3][0]
+    assert prompt.startswith("Warm watercolor.") and "Stick figures." not in prompt
+    log = json.loads((series_dir / "refs" / "candidates" / "candidates.json").read_text())
+    assert log["survivor-4.png"]["style"] == "Warm watercolor."
+    assert (series_dir / "style_line.txt").read_text().strip() == "Stick figures."

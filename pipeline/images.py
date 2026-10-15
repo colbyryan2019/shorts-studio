@@ -14,7 +14,7 @@ from pathlib import Path
 
 from .episode import Episode
 from .errors import PipelineError
-from .imagegen import ROUGH_COST_PER_IMAGE, ImageClient, fit_to_frame
+from .imagegen import ROUGH_COST_PER_IMAGE, Budget, ImageClient, fit_to_frame
 from .schema import Script, Shot
 from .series import Series
 
@@ -103,15 +103,15 @@ def describe_plan(plans: list[ShotPlan], quality: str) -> str:
     return "\n".join(lines)
 
 
-def make_images(client: ImageClient, series: Series, ep: Episode, plans: list[ShotPlan]) -> float | None:
-    """Draw the planned images. Returns the total cost when the model's rates are known."""
+def make_images(client: ImageClient, series: Series, ep: Episode, plans: list[ShotPlan], budget: Budget) -> float:
+    """Draw the planned images within the budget. Returns what this run spent."""
     out = images_dir(ep)
     out.mkdir(parents=True, exist_ok=True)
     manifest = _read_manifest(ep)
-    total, known = 0.0, True
     for p in plans:
         if not p.reason:
             continue
+        budget.check_next()
         image = client.generate(p.prompt, series.config.image_size, p.refs)
         fit_to_frame(image.png).save(p.path, format="PNG")
         cost = image.cost(client.model)
@@ -126,10 +126,6 @@ def make_images(client: ImageClient, series: Series, ep: Episode, plans: list[Sh
         }
         # Saved after every image, so an interrupted run keeps (and won't re-pay for) what it drew.
         (out / MANIFEST).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-        if cost is None:
-            known = False
-        else:
-            total += cost
-        price = f"  ${cost:.3f}" if cost is not None else ""
-        print(f"  {p.path.name}  ({p.reason}){price}")
-    return total if known else None
+        budget.add(cost)
+        print(f"  {p.path.name}  ({p.reason})  ${cost or 0:.3f}")
+    return budget.spent

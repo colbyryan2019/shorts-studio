@@ -14,7 +14,7 @@ from pathlib import Path
 from pipeline import refs
 from pipeline.config import PROJECT_ROOT
 from pipeline.errors import PipelineError
-from pipeline.imagegen import ROUGH_COST_PER_IMAGE, ImageClient, make_image_client
+from pipeline.imagegen import ROUGH_COST_PER_IMAGE, ImageClient, make_budget, make_image_client
 from pipeline.llm import FAKE_REFS, FakeLLMClient, LLMClient, make_client
 from pipeline.series import load_series
 
@@ -24,6 +24,10 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--series", required=True, help="folder name under series/")
     p.add_argument("--propose", action="store_true", help="(re)write refs.yaml from the bible; needs --force if it exists")
     p.add_argument("--generate", nargs="*", metavar="NAME", help="draw candidates for these refs (default: all)")
+    p.add_argument("--from", dest="base", type=int, metavar="N",
+                   help="with --generate NAME: start the new candidates from candidate N (adds new numbers)")
+    p.add_argument("--style", help="with --generate: try this art style instead of style_line.txt (adds new numbers)")
+    p.add_argument("--count", type=int, help="with --generate: how many candidates per ref (default: ref_candidates)")
     p.add_argument("--pick", nargs=2, metavar=("NAME", "N"), help="use candidate N as the reference for NAME")
     p.add_argument("--force", action="store_true", help="overwrite refs.yaml, or redraw existing candidates")
     p.add_argument("--dry-run", action="store_true", help="with --generate: list what would be drawn, spend nothing")
@@ -32,6 +36,12 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     args = p.parse_args(argv)
     if sum([args.propose, args.generate is not None, args.pick is not None]) > 1:
         p.error("use one of --propose, --generate or --pick at a time")
+    if (args.style or args.count) and args.generate is None:
+        p.error("--style and --count go with --generate")
+    if args.count is not None and not 1 <= args.count <= 6:
+        p.error("--count must be 1-6")
+    if args.base is not None and args.generate is None:
+        p.error("--from goes with --generate NAME, e.g. --generate survivor --from 2")
     if args.pick and not args.pick[1].isdigit():
         p.error("--pick takes a name and a candidate number, e.g. --pick survivor 2")
     return args
@@ -56,7 +66,8 @@ def run(argv: list[str] | None = None, root: Path = PROJECT_ROOT,
         unknown = [n for n in names if n not in series.ref_specs]
         if unknown:
             raise PipelineError(f"Not in refs.yaml: {', '.join(unknown)}. Known: {', '.join(series.ref_specs)}")
-        todo = refs.planned_candidates(series, names, args.force)
+        todo = refs.planned_candidates(series, names, args.force,
+                                       refine=args.base is not None or args.style is not None, count=args.count)
         rough = ROUGH_COST_PER_IMAGE.get(series.config.image_quality)
         estimate = f", roughly ${rough * len(todo):.2f}" if rough is not None and todo else ""
         print(f"{len(todo)} candidates to draw{estimate}.")
@@ -65,10 +76,10 @@ def run(argv: list[str] | None = None, root: Path = PROJECT_ROOT,
                 print(f"  {refs.candidate_path(series, name, i).name}")
             return 0
         client = images or make_image_client(args.fake_images, root, series.config.image_quality)
-        made = refs.generate_candidates(client, series, names, force=args.force)
-        costs = [c for _, c in made]
-        if made and all(c is not None for c in costs):
-            print(f"Cost: ${sum(costs):.2f}")
+        budget = make_budget(client.model, root)
+        refs.generate_candidates(client, series, names, budget, force=args.force, base=args.base,
+                                 style=args.style, count=args.count)
+        print(f"Cost this run: ${budget.spent:.2f}")
         print(f"\nLook at the images in {series.refs_dir / refs.CANDIDATES_DIR}, then pick one per ref, e.g.:")
         print(f"  python make_refs.py --series {series.name} --pick {names[0]} 1")
         return 0

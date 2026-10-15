@@ -4,13 +4,13 @@
 Your sailboat sank in a storm. You're in a small dinghy with a few supplies. Each episode is one survival problem, solved the right way, against an ocean that doesn't care.
 
 ## The survivor ("you")
-A simple, faceless stick figure in a wide-brim hat, so any viewer can be them. Never a talking character. Shown alone in the dinghy.
+An everyperson castaway in a wide-brim hat, drawn in a simplified animated style with an expressive but generic face, so any viewer can be them. Never a talking character. Shown alone in the dinghy.
 
 ## Narrator
 Speaks directly to the viewer as "you." Low, urgent, serious. Describes what is happening and what you must do, and explains why it works.
 
 ## Tone
-Serious and dramatic throughout. No jokes, no comic relief, no mascot. Visuals are very simple, almost stick-figure drawings; the narration carries the drama.
+Serious and dramatic throughout. No jokes, no comic relief, no mascot. Visuals are a simplified, stylized 3D animated look with muted color; the narration carries the drama.
 
 ## Series rules
 - Always second person.
@@ -39,7 +39,7 @@ One tarp, one knife, one signal mirror. No water. No food.
 1. Your boat is gone.
 2. No land. No radio. No one is coming.
 3. One tarp. One knife. One mirror. No water.
-4. Without water, you have three days. Maybe less.
+4. Without water, you have about four days. Less in this heat.
 5. The ocean is right there. Every instinct tells you to drink.
 6. Don't. Seawater is saltier than your kidneys can handle.
 7. To flush the salt, your body burns water it doesn't have. Every sip brings you closer to the end.

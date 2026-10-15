@@ -97,7 +97,8 @@ ref_candidates: 3            # optional: candidates per ref in make_refs.py
 ## House rules (house_rules.md, applied to every series)
 
 - Second-person narration ("you"), serious and dramatic. No jokes, no comic relief, no mascot.
-- Very simple, almost stick-figure visuals; the narration carries the drama.
+- Visual style is set per series (`style_line.txt`); keep it simple and readable on a phone. The narration carries the drama.
+- The main character is an everyperson the viewer can imagine being: simplified, generic features.
 - Short, fast lines.
 - End on a cliffhanger. Never a vote, a question to the audience, or "comment below."
 - When a series teaches facts, every factual claim comes from that series' sources and is listed in `claims`.

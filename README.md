@@ -2,7 +2,7 @@
 
 Turns a short episode outline into a finished vertical video, for any number of series. The design is in [SPEC.md](SPEC.md).
 
-**Status:** milestones 1, 1b, 2 and 3: research, the script (with review and approval), reference images, shot images and narration.
+**Status:** milestones 1–4: research, the script (with review and approval), reference images, shot images, narration and the first full video (push-in motion, captions, music, end card).
 
 ## Setup
 
@@ -117,6 +117,21 @@ python make_episode.py --series stranded-at-sea --episode 1 --fake-voice      # 
 - Re-running only re-reads lines whose narration, voice or model changed. Editing one line costs one line.
 - ElevenLabs bills characters against your plan's credits; `--dry-run` shows how many a run will use.
 - Until the voice is set up, runs still draw images and just skip narration with a note.
+
+## Video
+
+Once the images and narration exist, the same run renders each shot into a clip and assembles `episodes/epNN/final.mp4` (1080x1920, 30 fps). This step is free: it's all ffmpeg on your machine.
+
+```sh
+python make_episode.py --series stranded-at-sea --episode 1                              # images, narration, video
+python make_episode.py --series stranded-at-sea --episode 1 --fake-images --fake-voice   # whole pipeline, free
+```
+
+- **Music:** put royalty-free `.mp3` tracks in `assets/music/` (or `series/<name>/music/` for that series only). Each episode picks one and keeps it on every run.
+- **Captions:** put one `.ttf` / `.otf` font in `assets/fonts/` (a bold one, such as Montserrat Black or Anton). Style is `caption_style` in `series.yaml`: `bold_white_outline` or `plain_white`.
+- Music and fonts are git-ignored (their licenses may not allow redistribution), so keep your own copies.
+- Every shot uses a slow push-in for now; rock, drift and genvideo come in the next milestones.
+- Re-running re-renders only clips whose image or narration changed, and skips the final build if nothing changed. The target length is 25–45 s; you'll get a note outside that.
 
 ## Tests
 

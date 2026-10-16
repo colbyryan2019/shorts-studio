@@ -134,16 +134,21 @@ def make_voice(client: VoiceClient, ep: Episode, plans: list[LinePlan],
     return [(p.shot.n, manifest[p.path.name]["shot_seconds"]) for p in plans]
 
 
-def shot_durations(ep: Episode, script: Script) -> dict[int, float]:
-    """Shot number -> seconds, for the motion and assembly steps. Fails if any line is missing or stale."""
+def narration_timings(ep: Episode, script: Script) -> dict[int, tuple[float, float]]:
+    """Shot number -> (line seconds, shot seconds). Fails if any line is missing or stale."""
     manifest = _read_manifest(ep)
-    durations = {}
+    timings = {}
     for shot in script.shots:
         entry = manifest.get(f"{shot.n:02d}.mp3")
         if not entry or entry.get("text") != shot.narration or not (audio_dir(ep) / f"{shot.n:02d}.mp3").exists():
             raise PipelineError(f"Narration for shot {shot.n} is missing or out of date. Run the voice step first.")
-        durations[shot.n] = entry["shot_seconds"]
-    return durations
+        timings[shot.n] = (entry["line_seconds"], entry["shot_seconds"])
+    return timings
+
+
+def shot_durations(ep: Episode, script: Script) -> dict[int, float]:
+    """Shot number -> seconds, for the motion and assembly steps."""
+    return {n: shot for n, (_, shot) in narration_timings(ep, script).items()}
 
 
 def audio_seconds(path: Path) -> float:

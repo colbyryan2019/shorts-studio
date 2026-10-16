@@ -153,13 +153,16 @@ Turn each still into a clip of the shot's duration at 1080x1920, 30 fps:
 - `drift`: slow horizontal pan across a slightly oversized frame.
 - `genvideo`: send the still to the image-to-video model on fal.ai with a short motion prompt that preserves the art style, trim or loop to duration. If the call fails, fall back to the series `default_motion`.
 
+Until a motion is built, shots that ask for it use `pushin`. Clip length is a whole number of frames, and the narration is padded to the same length, so sound and picture stay in sync. `clips/manifest.json` fingerprints each clip (image, length, motion), so only clips whose image or narration length changed are re-rendered, plus any `--redo N`.
+
 ### 6. Assembly (pipeline/assemble.py)
 
 - Concatenate the shot clips with hard cuts.
 - Narration track: line audio placed at each shot's start.
-- Music: random track from the series `music/` (or `assets/music/`), at `music_volume_db` under narration, fade out at the end.
-- Captions: build an ASS subtitle file from the script lines and known timings (no transcription needed), styled per `caption_style`, one short phrase at a time (split long lines).
+- Music: a track from the series `music/` (or `assets/music/`), chosen at random but the same one on every run of an episode, looped if short, at `music_volume_db` under narration, faded out over the last 2 s. With no tracks the video has narration only, with a note.
+- Captions: drawn with Pillow as transparent PNGs and overlaid by ffmpeg (so any ffmpeg build works, no libass needed), timed from the script lines and known durations (no transcription), styled per `caption_style` (`bold_white_outline` or `plain_white`), one short phrase at a time, in the font from `assets/fonts/` (first .ttf/.otf; Pillow's built-in font if none).
 - End card: `end_card` text in plain white capitals over the last shot for its final 2 s.
+- `final.json` fingerprints every input, so an unchanged episode isn't re-encoded.
 - Output `final.mp4`, H.264, AAC, 1080x1920, 30 fps.
 
 ### 7. Review and cost (pipeline/review.py)

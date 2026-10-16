@@ -1,4 +1,5 @@
-"""Turn an episode outline into a vertical video. So far: the script (with review and approval), images and narration.
+"""Turn an episode outline into a vertical video. So far: the script (with review and approval), images, narration and the
+assembled video (push-in motion, captions, music, end card).
 
     python make_episode.py --series stranded-at-sea --episode 1 --outline "..." [--fake-llm]
     python make_episode.py --series stranded-at-sea --episode 1 --revise "make line 4 punchier"
@@ -12,18 +13,20 @@ import argparse
 import sys
 from pathlib import Path
 
+from pipeline.assemble import assemble, length_warning
 from pipeline.config import PROJECT_ROOT, load_settings
 from pipeline.episode import Episode
 from pipeline.errors import PipelineError
 from pipeline.imagegen import FAKE_MODEL, ImageClient, make_budget, make_image_client
 from pipeline.images import describe_plan, make_images, plan_images
 from pipeline.llm import LLMClient, make_client
+from pipeline.motion import make_clips, plan_clips
 from pipeline.schema import validate_script
 from pipeline.script import format_summary, planned_calls, write_script
 from pipeline.series import Series, load_series
-from pipeline.voice import (VoiceClient, describe_voice_plan, make_voice, make_voice_client, plan_voice,
-                            voice_setup_problem)
 from pipeline.voice import FAKE_MODEL as FAKE_VOICE_MODEL
+from pipeline.voice import (VoiceClient, describe_voice_plan, make_voice, make_voice_client, narration_timings,
+                            plan_voice, voice_setup_problem)
 
 
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -166,7 +169,8 @@ def run(argv: list[str] | None = None, root: Path = PROJECT_ROOT,
         print(f"Narration: skipped until set up ({problem}). --fake-voice makes placeholder audio.")
 
     if args.dry_run:
-        print("\n(--dry-run: nothing drawn or read.) Video arrives in later milestones.")
+        print("Video: rendered for free with ffmpeg once the images and narration exist.")
+        print("\n(--dry-run: nothing drawn, read or rendered.)")
         return 0
 
     if any(p.reason for p in plans):
@@ -187,7 +191,27 @@ def run(argv: list[str] | None = None, root: Path = PROJECT_ROOT,
         total = sum(seconds for _, seconds in durations)
         print(f"\nNarration is in {ep.path / 'audio'}: {total:.1f}s of video at {len(durations)} shots. "
               "Listen through; --redo-voice N re-reads one line, and editing a line's narration re-reads just it.")
-    print("Video arrives in later milestones.")
+    else:
+        print("\nVideo: waits for narration (set up ElevenLabs, or use --fake-voice for silent placeholder audio).")
+        return 0
+
+    timings = narration_timings(ep, result.script)
+    clips = plan_clips(ep, result.script, {n: shot for n, (_, shot) in timings.items()}, set(args.redo))
+    if any(c.reason for c in clips):
+        print("\nRendering clips...")
+        make_clips(ep, clips)
+    print("\nAssembling final.mp4...")
+    built = assemble(series, ep, result.script, clips, timings, root)
+    if not built.rebuilt:
+        print("  nothing changed since the last build")
+    if built.music is None:
+        print(f"  Note: no music found in {series.path / 'music'} or {root / 'assets' / 'music'}; narration only.")
+    if built.font is None:
+        print(f"  Note: no font in {root / 'assets' / 'fonts'}; captions use Pillow's built-in font.")
+    if warning := length_warning(built.seconds):
+        print(f"  {warning}")
+    print(f"\nDone: {built.final} ({built.seconds:.1f}s"
+          + (f", music: {built.music.name}" if built.music else "") + ")")
     return 0
 
 

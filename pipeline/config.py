@@ -21,6 +21,8 @@ class Settings:
     image_provider: str = "openai"
     image_model: str = ""
     image_cost_limit: float = 2.00  # USD per run of the image steps
+    elevenlabs_api_key: str = field(default="", repr=False)
+    voice_model: str = ""
 
 
 def load_settings(root: Path = PROJECT_ROOT) -> Settings:
@@ -44,4 +46,6 @@ def load_settings(root: Path = PROJECT_ROOT) -> Settings:
         image_provider=(values.get("IMAGE_PROVIDER") or "openai").strip().lower(),
         image_model=(values.get("IMAGE_MODEL") or "").strip(),
         image_cost_limit=image_cost_limit,
+        elevenlabs_api_key=(values.get("ELEVENLABS_API_KEY") or "").strip(),
+        voice_model=(values.get("VOICE_MODEL") or "").strip(),
     )

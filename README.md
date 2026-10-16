@@ -2,11 +2,11 @@
 
 Turns a short episode outline into a finished vertical video, for any number of series. The design is in [SPEC.md](SPEC.md).
 
-**Status:** milestones 1, 1b and 2: research, the script (with review and approval), reference images and shot images.
+**Status:** milestones 1, 1b, 2 and 3: research, the script (with review and approval), reference images, shot images and narration.
 
 ## Setup
 
-Needs Python 3.11+.
+Needs Python 3.11+ and ffmpeg (`brew install ffmpeg`).
 
 ```sh
 python3 -m venv .venv
@@ -22,6 +22,8 @@ ANTHROPIC_API_KEY=sk-ant-...
 LLM_MODEL=claude-sonnet-5-5
 OPENAI_API_KEY=sk-...
 IMAGE_MODEL=gpt-image-2.5-sunburst
+ELEVENLABS_API_KEY=...
+VOICE_MODEL=eleven_multilingual_v2
 ```
 
 Keys are read only from `.env`; shell environment variables are ignored.
@@ -99,6 +101,22 @@ python make_episode.py --series stranded-at-sea --episode 1 --redo 5    # redraw
 - Re-running only redraws shots whose inputs changed: the image prompt, the style line, a reference image, the model or the quality. Editing one shot's `image_prompt` costs one image.
 - Quality is `image_quality` in `series.yaml` (`low`, `medium`, `high`).
 - `--fake-images` draws labeled placeholders for free.
+
+## Narration
+
+Each series has one narrator voice: copy its voice ID from ElevenLabs (Voices → the voice → ID) into `voice_id` in `series.yaml`. With that, `ELEVENLABS_API_KEY` and `VOICE_MODEL` set, the same `make_episode.py` run reads every line into `episodes/epNN/audio/` after drawing the images.
+
+```sh
+python make_episode.py --series stranded-at-sea --episode 1 --dry-run         # which lines, and how many characters
+python make_episode.py --series stranded-at-sea --episode 1                   # draw images, then read narration
+python make_episode.py --series stranded-at-sea --episode 1 --redo-voice 4    # re-read line 4 (try another take)
+python make_episode.py --series stranded-at-sea --episode 1 --fake-voice      # silent placeholder lines, free
+```
+
+- One request per line, so each shot's length is exact: line length + 0.3 s (at least 1.5 s). The total is printed at the end.
+- Re-running only re-reads lines whose narration, voice or model changed. Editing one line costs one line.
+- ElevenLabs bills characters against your plan's credits; `--dry-run` shows how many a run will use.
+- Until the voice is set up, runs still draw images and just skip narration with a note.
 
 ## Tests
 

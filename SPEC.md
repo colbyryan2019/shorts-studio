@@ -66,6 +66,7 @@ FAL_KEY=                 # image-to-video clips
 LLM_MODEL=               # current Claude Sonnet-class model string
 IMAGE_PROVIDER=openai    # openai | fal
 IMAGE_MODEL=             # image model id, e.g. gpt-image-2.5-sunburst
+VOICE_MODEL=             # ElevenLabs model id, e.g. eleven_multilingual_v2
 VIDEO_MODEL=             # fal model id for image-to-video (Veo Lite or Kling class)
 ```
 
@@ -142,7 +143,7 @@ Only for an approved script that still passes validation. For each shot, prompt 
 
 ### 4. Narration (pipeline/voice.py)
 
-ElevenLabs text-to-speech with the series `voice_id`, one request per line, so each line's duration is known exactly. Save `audio/NN.mp3`. Shot duration = line duration + 0.3 s pause (minimum 1.5 s).
+ElevenLabs text-to-speech with the series `voice_id` and `VOICE_MODEL`, one request per line (with the neighbouring lines sent as context so the delivery flows), so each line's duration is known exactly. Save `audio/NN.mp3`; durations are measured with ffprobe. Shot duration = line duration + 0.3 s pause (minimum 1.5 s). `audio/manifest.json` records each line's text, voice, model, characters and durations: a re-run re-reads only lines whose text, voice or model changed, plus any `--redo-voice N`. Until the key, model and voice are set the step is skipped with a note; `--fake-voice` makes silent placeholder lines of a realistic length for free.
 
 ### 5. Motion (pipeline/motion.py)
 

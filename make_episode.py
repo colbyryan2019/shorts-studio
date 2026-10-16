@@ -1,9 +1,9 @@
-"""Turn an episode outline into a vertical video. So far: the script (with review and approval) and images.
+"""Turn an episode outline into a vertical video. So far: the script (with review and approval), images and narration.
 
     python make_episode.py --series stranded-at-sea --episode 1 --outline "..." [--fake-llm]
     python make_episode.py --series stranded-at-sea --episode 1 --revise "make line 4 punchier"
     python make_episode.py --series stranded-at-sea --episode 1 --approve
-    python make_episode.py --series stranded-at-sea --episode 1 [--dry-run] [--redo 5]
+    python make_episode.py --series stranded-at-sea --episode 1 [--dry-run] [--redo 5] [--redo-voice 5]
 """
 
 from __future__ import annotations
@@ -21,6 +21,9 @@ from pipeline.llm import LLMClient, make_client
 from pipeline.schema import validate_script
 from pipeline.script import format_summary, planned_calls, write_script
 from pipeline.series import Series, load_series
+from pipeline.voice import (VoiceClient, describe_voice_plan, make_voice, make_voice_client, plan_voice,
+                            voice_setup_problem)
+from pipeline.voice import FAKE_MODEL as FAKE_VOICE_MODEL
 
 
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -36,6 +39,9 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--fake-images", action="store_true", help="draw placeholder images instead of calling the image API")
     p.add_argument("--redo", type=int, action="append", default=[], metavar="N",
                    help="redraw shot N's image even if it is up to date (repeatable)")
+    p.add_argument("--fake-voice", action="store_true", help="make silent placeholder narration instead of calling ElevenLabs")
+    p.add_argument("--redo-voice", type=int, action="append", default=[], metavar="N",
+                   help="re-read shot N's narration even if it is up to date (repeatable)")
     args = p.parse_args(argv)
 
     if args.episode < 1:
@@ -63,7 +69,8 @@ def make_script_client(args: argparse.Namespace, series: Series, root: Path) -> 
 
 
 def run(argv: list[str] | None = None, root: Path = PROJECT_ROOT,
-        client: LLMClient | None = None, image_client: ImageClient | None = None) -> int:
+        client: LLMClient | None = None, image_client: ImageClient | None = None,
+        voice_client: VoiceClient | None = None) -> int:
     args = parse_args(argv)
     series = load_series(args.series, root, args.episode)
     ep = Episode.of(series, args.episode)
@@ -141,8 +148,25 @@ def run(argv: list[str] | None = None, root: Path = PROJECT_ROOT,
         model = image_client.model if image_client else load_settings(root).image_model
     plans = plan_images(series, ep, result.script, model, set(args.redo))
     print(describe_plan(plans, series.config.image_quality))
+
+    # Narration runs only once it's set up (key, model, voice), or with --fake-voice.
+    if voice_client:
+        voice_ready, voice_id, voice_model = True, voice_client.voice_id, voice_client.model
+    elif args.fake_voice:
+        voice_ready, voice_id, voice_model = True, "fake", FAKE_VOICE_MODEL
+    else:
+        problem = voice_setup_problem(series, root)
+        voice_ready = problem is None
+        voice_id, voice_model = series.config.voice_id, load_settings(root).voice_model
+    voice_plans = plan_voice(ep, result.script, voice_id, voice_model, set(args.redo_voice))
+    print()
+    if voice_ready:
+        print(describe_voice_plan(voice_plans))
+    else:
+        print(f"Narration: skipped until set up ({problem}). --fake-voice makes placeholder audio.")
+
     if args.dry_run:
-        print("\n(--dry-run: nothing drawn.) Voice and video arrive in later milestones.")
+        print("\n(--dry-run: nothing drawn or read.) Video arrives in later milestones.")
         return 0
 
     if any(p.reason for p in plans):
@@ -151,7 +175,19 @@ def run(argv: list[str] | None = None, root: Path = PROJECT_ROOT,
         spent = make_images(images, series, ep, plans, make_budget(images.model, root))
         print(f"Image cost this run: ${spent:.2f}")
     print(f"\nImages are in {ep.path / 'images'}. Look them over; --redo N redraws one shot, and editing a "
-          "shot's image_prompt redraws just that shot next run. Voice and video arrive in later milestones.")
+          "shot's image_prompt redraws just that shot next run.")
+
+    if voice_ready:
+        if any(p.reason for p in voice_plans):
+            voice = voice_client or make_voice_client(args.fake_voice, series, root)
+            print(f"\nReading narration with {voice.model}...")
+            durations = make_voice(voice, ep, voice_plans)
+        else:
+            durations = make_voice(None, ep, voice_plans)  # nothing to read; just collects durations
+        total = sum(seconds for _, seconds in durations)
+        print(f"\nNarration is in {ep.path / 'audio'}: {total:.1f}s of video at {len(durations)} shots. "
+              "Listen through; --redo-voice N re-reads one line, and editing a line's narration re-reads just it.")
+    print("Video arrives in later milestones.")
     return 0
 
 

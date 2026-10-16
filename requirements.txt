@@ -1,5 +1,6 @@
-# Later milestones add elevenlabs and fal-client.
+# A later milestone adds fal-client.
 anthropic>=1.13,<2
+elevenlabs>=2.73,<3
 openai>=3.31,<4
 pillow>=12.3,<13
 pydantic>=2.14,<3

@@ -1,5 +1,5 @@
 """Turn an episode outline into a vertical video. So far: the script (with review and approval), images, narration and the
-assembled video (push-in motion, captions, music, end card).
+assembled video (push-in, rock and drift motion, captions, music, end card).
 
     python make_episode.py --series stranded-at-sea --episode 1 --outline "..." [--fake-llm]
     python make_episode.py --series stranded-at-sea --episode 1 --revise "make line 4 punchier"
@@ -196,7 +196,8 @@ def run(argv: list[str] | None = None, root: Path = PROJECT_ROOT,
         return 0
 
     timings = narration_timings(ep, result.script)
-    clips = plan_clips(ep, result.script, {n: shot for n, (_, shot) in timings.items()}, set(args.redo))
+    clips = plan_clips(ep, result.script, {n: shot for n, (_, shot) in timings.items()}, set(args.redo),
+                       series.config.default_motion)
     if any(c.reason for c in clips):
         print("\nRendering clips...")
         make_clips(ep, clips)

@@ -10,7 +10,7 @@ from pipeline.assemble import length_warning, pick_music
 from pipeline.captions import caption_style, phrase_times, render_text, split_phrases
 from pipeline.episode import Episode
 from pipeline.errors import PipelineError
-from pipeline.motion import rendered_motion
+from pipeline.motion import render_drift, render_rock, rendered_motion
 from pipeline.series import load_series
 
 needs_ffmpeg = pytest.mark.skipif(not (shutil.which("ffmpeg") and shutil.which("ffprobe")), reason="needs ffmpeg")
@@ -65,9 +65,40 @@ def test_length_warning():
     assert "under" in length_warning(20) and "over" in length_warning(50)
 
 
-def test_unbuilt_motions_use_pushin():
-    assert rendered_motion("pushin") == "pushin"
-    assert rendered_motion("rock") == "pushin" and rendered_motion("genvideo") == "pushin"
+def test_genvideo_uses_the_default_motion_until_built():
+    assert rendered_motion("rock", "drift") == "rock" and rendered_motion("drift", "rock") == "drift"
+    assert rendered_motion("genvideo", "rock") == "rock"
+
+
+def _gray_frames(path, w=1080, h=1920):
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-f", "rawvideo", "-pix_fmt", "gray", "-"],
+                         capture_output=True, check=True).stdout
+    return [Image.frombytes("L", (w, h), raw[i:i + w * h]) for i in range(0, len(raw), w * h)]
+
+
+@needs_ffmpeg
+def test_rock_never_shows_corners(tmp_path):
+    grey = tmp_path / "grey.png"
+    Image.new("RGB", (1080, 1920), (128, 128, 128)).save(grey)
+    render_rock(grey, tmp_path / "rock.mp4", 90, shot_n=1)  # 3 s: one full swing
+    frames = _gray_frames(tmp_path / "rock.mp4")
+    assert len(frames) == 90
+    edges = [(0, 0), (1079, 0), (0, 1919), (1079, 1919), (540, 0), (540, 1919), (0, 960), (1079, 960)]
+    assert min(f.getpixel(p) for f in frames for p in edges) > 100  # black would mean a corner showed
+
+
+@needs_ffmpeg
+def test_drift_pans_opposite_ways_on_alternate_shots(tmp_path):
+    img = tmp_path / "ramp.png"
+    Image.linear_gradient("L").rotate(90).resize((1080, 1920)).convert("RGB").save(img)  # brightness varies across x
+
+    def brightness_change(shot_n):
+        render_drift(img, tmp_path / "d.mp4", 30, shot_n=shot_n)
+        frames = _gray_frames(tmp_path / "d.mp4")
+        return frames[-1].getpixel((540, 960)) - frames[0].getpixel((540, 960))
+
+    one, two = brightness_change(1), brightness_change(2)
+    assert abs(one) > 10 and abs(two) > 10 and (one > 0) != (two > 0)
 
 
 def test_video_waits_for_narration(project, good_script, capsys):
@@ -87,7 +118,8 @@ def _probe(path):
 
 
 @needs_ffmpeg
-def test_full_video_end_to_end(project, good_script, capsys):
+def test_full_video_end_to_end(project, good_script, capsys, monkeypatch):
+    monkeypatch.setattr("pipeline.voice.FAKE_WORDS_PER_SECOND", 20)  # short clips keep the test quick
     music = project / "assets" / "music"
     music.mkdir(parents=True)
     subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=220:duration=5",
@@ -109,7 +141,7 @@ def test_full_video_end_to_end(project, good_script, capsys):
     assert float(v["duration"]) == pytest.approx(record["seconds"], abs=0.05)
     assert float(a["duration"]) == pytest.approx(record["seconds"], abs=0.05)
     out = capsys.readouterr().out
-    assert "rock not built yet" in out and "Done:" in out
+    assert "genvideo not built yet" in out and "Done:" in out
 
     # Unchanged: nothing re-rendered or re-encoded.
     assert make_episode.run(base, root=project) == 0
@@ -119,4 +151,4 @@ def test_full_video_end_to_end(project, good_script, capsys):
     # --redo 2 redraws shot 2's image, so only clip 2 is re-rendered and the final is rebuilt.
     assert make_episode.run(base + ["--redo", "2"], root=project) == 0
     out = capsys.readouterr().out
-    assert "  02.mp4  pushin" in out and "  01.mp4" not in out
+    assert "  02.mp4  " in out and "  01.mp4" not in out

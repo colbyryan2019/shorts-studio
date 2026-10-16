@@ -2,7 +2,7 @@
 
 Turns a short episode outline into a finished vertical video, for any number of series. The design is in [SPEC.md](SPEC.md).
 
-**Status:** milestones 1–4: research, the script (with review and approval), reference images, shot images, narration and the first full video (push-in motion, captions, music, end card).
+**Status:** milestones 1–5: research, the script (with review and approval), reference images, shot images, narration and the full video (push-in, rock and drift motion, captions, music, end card).
 
 ## Setup
 
@@ -130,7 +130,7 @@ python make_episode.py --series stranded-at-sea --episode 1 --fake-images --fake
 - **Music:** put royalty-free `.mp3` tracks in `assets/music/` (or `series/<name>/music/` for that series only). Each episode picks one and keeps it on every run.
 - **Captions:** put one `.ttf` / `.otf` font in `assets/fonts/` (a bold one, such as Montserrat Black or Anton). Style is `caption_style` in `series.yaml`: `bold_white_outline` or `plain_white`.
 - Music and fonts are git-ignored (their licenses may not allow redistribution), so keep your own copies.
-- Every shot uses a slow push-in for now; rock, drift and genvideo come in the next milestones.
+- Each shot moves as its `motion` says: `pushin` (slow zoom), `rock` (gentle tilt and bob, like a boat on a swell) or `drift` (slow sideways pan). `genvideo` shots use the series `default_motion` until that milestone is built.
 - Re-running re-renders only clips whose image or narration changed, and skips the final build if nothing changed. The target length is 25–45 s; you'll get a note outside that.
 
 ## Tests

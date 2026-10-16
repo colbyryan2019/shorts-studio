@@ -149,11 +149,12 @@ ElevenLabs text-to-speech with the series `voice_id` and `VOICE_MODEL`, one requ
 
 Turn each still into a clip of the shot's duration at 1080x1920, 30 fps:
 - `pushin`: slow zoom 100% to 110% (zoompan).
-- `rock`: scale to about 115%, rotate with a small sine wave (about ±2°, period about 3 s) plus a small vertical bob, then crop back to 1080x1920 so no corners show.
-- `drift`: slow horizontal pan across a slightly oversized frame.
+- `rock`: scale to about 115%, rotate with a small sine wave (about ±2°, period about 3 s) plus a small vertical bob, then crop back to 1080x1920 so no corners show. Each shot starts at a different point in the swell.
+- `drift`: slow, steady horizontal pan across a frame about 112% wide; alternate shots pan opposite ways.
+- `rock` and `drift` are rendered at 2x and scaled down, so slow movement doesn't step in whole pixels.
 - `genvideo`: send the still to the image-to-video model on fal.ai with a short motion prompt that preserves the art style, trim or loop to duration. If the call fails, fall back to the series `default_motion`.
 
-Until a motion is built, shots that ask for it use `pushin`. Clip length is a whole number of frames, and the narration is padded to the same length, so sound and picture stay in sync. `clips/manifest.json` fingerprints each clip (image, length, motion), so only clips whose image or narration length changed are re-rendered, plus any `--redo N`.
+Until `genvideo` is built, those shots use the series `default_motion`. Clip length is a whole number of frames, and the narration is padded to the same length, so sound and picture stay in sync. `clips/manifest.json` fingerprints each clip (image, length, motion), so only clips whose image or narration length changed are re-rendered, plus any `--redo N`.
 
 ### 6. Assembly (pipeline/assemble.py)
 

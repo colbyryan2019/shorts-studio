@@ -176,8 +176,17 @@ def test_cli_dry_run_reads_nothing(episode, project, capsys):
     assert f"{len(_script(series, ep).shots)} lines to read" in capsys.readouterr().out
 
 
+@pytest.fixture
+def no_video(monkeypatch):
+    """Skip clip rendering and assembly; tests/test_video.py covers them."""
+    from pipeline.assemble import Assembly
+    monkeypatch.setattr(make_episode, "make_clips", lambda ep, plans: None)
+    monkeypatch.setattr(make_episode, "assemble",
+                        lambda series, ep, *a: Assembly(ep.path / "final.mp4", 30.0, None, None, rebuilt=False))
+
+
 @needs_ffmpeg
-def test_cli_fake_voice_end_to_end(episode, project, capsys):
+def test_cli_fake_voice_end_to_end(episode, project, capsys, no_video):
     series, ep = episode
     ep.approve()
     base = ["--series", "test-series", "--episode", "1", "--fake-images", "--fake-voice"]

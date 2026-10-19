@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Protocol
 
 from .config import load_settings
+from .cost import log_cost
 from .episode import Episode
 from .errors import PipelineError
 from .schema import Script, Shot
@@ -166,6 +167,8 @@ def make_voice(client: VoiceClient, ep: Episode, plans: list[LinePlan],
         }
         # Saved after every line, so an interrupted run keeps (and won't re-pay for) what it read.
         (out / MANIFEST).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+        if client.model != FAKE_MODEL:  # billed as characters against the plan's credits, not in dollars
+            log_cost(ep, "voice", p.path.name, client.model, len(p.shot.narration), "characters", None)
         print(f"  {p.path.name}  ({p.reason})  {seconds:.2f}s")
     return [(p.shot.n, shot_seconds(manifest[p.path.name]["line_seconds"], pause)) for p in plans]
 

@@ -1,10 +1,10 @@
-"""Turn an episode outline into a vertical video. So far: the script (with review and approval), images, narration and the
-assembled video (push-in, rock and drift motion, captions, music, end card).
+"""Turn an episode outline into a vertical video: the script (with review and approval), images, narration, the
+assembled video (push-in, rock and drift motion, captions, music, end card) and a review sheet.
 
     python make_episode.py --series stranded-at-sea --episode 1 --outline "..." [--fake-llm]
     python make_episode.py --series stranded-at-sea --episode 1 --revise "make line 4 punchier"
     python make_episode.py --series stranded-at-sea --episode 1 --approve
-    python make_episode.py --series stranded-at-sea --episode 1 [--dry-run] [--redo 5] [--redo-voice 5]
+    python make_episode.py --series stranded-at-sea --episode 1 [--dry-run] [--redo 5] [--redo-voice 2-4]
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 from pipeline.assemble import assemble, choose_music, length_warning
+from pipeline.captions import find_font
 from pipeline.config import PROJECT_ROOT, load_settings
 from pipeline.episode import Episode
 from pipeline.errors import PipelineError
@@ -21,12 +22,39 @@ from pipeline.imagegen import FAKE_MODEL, ImageClient, make_budget, make_image_c
 from pipeline.images import describe_plan, make_images, plan_images
 from pipeline.llm import LLMClient, make_client
 from pipeline.motion import make_clips, plan_clips
-from pipeline.schema import validate_script
+from pipeline.review import write_review
+from pipeline.schema import Script, validate_script
 from pipeline.script import format_summary, planned_calls, write_script
 from pipeline.series import Series, load_series
 from pipeline.voice import FAKE_MODEL as FAKE_VOICE_MODEL
 from pipeline.voice import (VoiceClient, describe_voice_plan, make_voice, make_voice_client, narration_timings,
                             plan_voice, voice_setup_problem, word_timings)
+
+
+VISUAL_MODE = "stills"  # the only mode built so far
+
+
+def shot_numbers(text: str) -> tuple[int, ...] | None:
+    """--redo / --redo-voice value: "5", "3,7", "2-4" or "all" (None)."""
+    if text.strip().lower() == "all":
+        return None
+    numbers = []
+    try:
+        for part in text.split(","):
+            low, _, high = part.strip().partition("-")
+            first, last = int(low), int(high or low)
+            if first < 1 or last < first:
+                raise ValueError
+            numbers.extend(range(first, last + 1))
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"'{text}' isn't a shot list: use e.g. 5, 3,7, 2-4 or all") from None
+    return tuple(numbers)
+
+
+def expand_shots(values: list[tuple[int, ...] | None], script: Script) -> set[int]:
+    if any(v is None for v in values):
+        return {s.n for s in script.shots}
+    return {n for v in values for n in v}
 
 
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -40,13 +68,13 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--approve", action="store_true", help="approve the current script so later steps may run")
     p.add_argument("--fake-llm", action="store_true", help="use a canned script instead of calling the Claude API")
     p.add_argument("--fake-images", action="store_true", help="draw placeholder images instead of calling the image API")
-    p.add_argument("--redo", type=int, action="append", default=[], metavar="N",
-                   help="redraw shot N's image even if it is up to date (repeatable)")
+    p.add_argument("--redo", type=shot_numbers, action="append", default=[], metavar="SHOTS",
+                   help="redraw these shots' images (and so their clips): 5, 3,7, 2-4 or all (repeatable)")
     p.add_argument("--fake-voice", action="store_true", help="make silent placeholder narration instead of calling ElevenLabs")
     p.add_argument("--music", metavar="NAME",
                    help="use the track whose file name contains NAME for this episode (kept for later runs)")
-    p.add_argument("--redo-voice", type=int, action="append", default=[], metavar="N",
-                   help="re-read shot N's narration even if it is up to date (repeatable)")
+    p.add_argument("--redo-voice", type=shot_numbers, action="append", default=[], metavar="SHOTS",
+                   help="re-read these shots' narration: 5, 3,7, 2-4 or all (repeatable)")
     args = p.parse_args(argv)
 
     if args.episode < 1:
@@ -55,6 +83,8 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         p.error("use either --revise or --redo-script, not both")
     if args.approve and (args.revise is not None or args.redo_script):
         p.error("--approve can't be combined with --revise or --redo-script: review the new script first")
+    if (args.redo or args.redo_voice) and (args.approve or args.revise is not None or args.redo_script):
+        p.error("--redo and --redo-voice apply to an approved script; run them on their own")
     if args.revise is not None and not args.revise.strip():
         p.error("--revise needs notes, e.g. --revise \"rewrite in second person\"")
     return args
@@ -138,6 +168,8 @@ def run(argv: list[str] | None = None, root: Path = PROJECT_ROOT,
 
     if status != "approved":
         print("Next: review the script, then either edit script.json, run with --revise \"notes\", or --approve.")
+        if args.redo or args.redo_voice:
+            print("(--redo / --redo-voice wait until the script is approved.)")
         if args.dry_run:
             print()
             print(planned_calls(result.script))
@@ -153,7 +185,8 @@ def run(argv: list[str] | None = None, root: Path = PROJECT_ROOT,
         model = FAKE_MODEL
     else:
         model = image_client.model if image_client else load_settings(root).image_model
-    plans = plan_images(series, ep, result.script, model, set(args.redo))
+    redo = expand_shots(args.redo, result.script)
+    plans = plan_images(series, ep, result.script, model, redo)
     print(describe_plan(plans, series.config.image_quality))
 
     # Narration runs only once it's set up (key, model, voice), or with --fake-voice.
@@ -167,7 +200,8 @@ def run(argv: list[str] | None = None, root: Path = PROJECT_ROOT,
         voice_id, voice_model = series.config.voice_id, load_settings(root).voice_model
     cfg = series.config
     voice_settings = cfg.voice_settings.as_dict() if cfg.voice_settings and not args.fake_voice else None
-    voice_plans = plan_voice(ep, result.script, voice_id, voice_model, set(args.redo_voice), voice_settings)
+    voice_plans = plan_voice(ep, result.script, voice_id, voice_model, expand_shots(args.redo_voice, result.script),
+                             voice_settings)
     print()
     if voice_ready:
         print(describe_voice_plan(voice_plans))
@@ -199,11 +233,12 @@ def run(argv: list[str] | None = None, root: Path = PROJECT_ROOT,
               "Listen through; --redo-voice N re-reads one line, and editing a line's narration re-reads just it.")
     else:
         print("\nVideo: waits for narration (set up ElevenLabs, or use --fake-voice for silent placeholder audio).")
+        report(series, ep, result.script, root)
         return 0
 
     timings = narration_timings(ep, result.script, cfg.line_pause_seconds)
-    clips = plan_clips(ep, result.script, {n: shot for n, (_, shot) in timings.items()}, set(args.redo),
-                       series.config.default_motion)
+    shot_seconds = {n: shot for n, (_, shot) in timings.items()}
+    clips = plan_clips(ep, result.script, shot_seconds, redo, series.config.default_motion)
     if any(c.reason for c in clips):
         print("\nRendering clips...")
         make_clips(ep, clips)
@@ -221,7 +256,22 @@ def run(argv: list[str] | None = None, root: Path = PROJECT_ROOT,
         print(f"  {warning}")
     print(f"\nDone: {built.final} ({built.seconds:.1f}s"
           + (f", music: {built.music.name}" if built.music else "") + ")")
+    report(series, ep, result.script, root, shot_seconds)
     return 0
+
+
+def report(series: Series, ep: Episode, script: Script, root: Path, shot_seconds: dict[int, float] | None = None) -> None:
+    """Write review.md and print the episode's logged cost."""
+    font = find_font(root / "assets" / "fonts", series.config.caption_font)
+    review = write_review(series, ep, script, mode=VISUAL_MODE, status=ep.approval_status(),
+                          shot_seconds=shot_seconds, font=font)
+    print(f"\nReview sheet: {review.path}  (check it before posting; nothing is posted for you)")
+    note = f" plus {review.unpriced} call(s) not priced in USD (e.g. ElevenLabs characters)" if review.unpriced else ""
+    cost_file = ep.path / "cost.json"
+    if cost_file.is_file():
+        print(f"Logged cost for this episode: ${review.total_usd:.2f}{note}. Details in {cost_file}.")
+    else:
+        print("Logged cost for this episode: none (no paid calls logged in cost.json yet).")
 
 
 def main() -> int:

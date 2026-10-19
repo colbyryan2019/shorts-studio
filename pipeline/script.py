@@ -159,9 +159,12 @@ def write_script(
     )
 
 
+STATUS_LABELS = {"approved": "APPROVED", "draft": "DRAFT", "changed": "DRAFT (edited since approval)"}
+
+
 def format_summary(script: Script, series: Series, status: str, warnings: list[str], errors: list[str] = ()) -> str:
     cfg = series.config
-    label = {"approved": "APPROVED", "draft": "DRAFT", "changed": "DRAFT (edited since approval)"}[status]
+    label = STATUS_LABELS[status]
     lines = [
         f"{script.title}  [{label}]",
         f"End card: {script.end_card}",

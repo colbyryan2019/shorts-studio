@@ -18,6 +18,7 @@ REF_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 REF_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 RECENT_EPISODES = 3
 EPISODE_DIR_RE = re.compile(r"^ep(\d+)$")
+TODO_RE = re.compile(r"^\s*(?:[-*]\s*)?TODO:")  # placeholder lines left from templates/series/
 
 
 class VoiceSettings(BaseModel):
@@ -119,6 +120,10 @@ def _read_required(path: Path, what: str) -> str:
     text = path.read_text(encoding="utf-8").strip()
     if not text:
         raise PipelineError(f"{what} is empty: {path}")
+    todo = [line.strip() for line in text.splitlines() if TODO_RE.match(line)]
+    if todo:
+        raise PipelineError(f"{what} still has {len(todo)} TODO line(s) from the template, starting with "
+                            f"\"{todo[0][:80]}\". Fill them in (and delete the TODO lines): {path}")
     return text
 
 

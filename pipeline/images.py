@@ -12,9 +12,10 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+from .cost import log_cost
 from .episode import Episode
 from .errors import PipelineError
-from .imagegen import ROUGH_COST_PER_IMAGE, Budget, ImageClient, fit_to_frame
+from .imagegen import FAKE_MODEL, ROUGH_COST_PER_IMAGE, Budget, ImageClient, fit_to_frame
 from .schema import Script, Shot
 from .series import Series
 
@@ -129,5 +130,7 @@ def make_images(client: ImageClient, series: Series, ep: Episode, plans: list[Sh
         # Saved after every image, so an interrupted run keeps (and won't re-pay for) what it drew.
         (out / MANIFEST).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
         budget.add(cost)
+        if client.model != FAKE_MODEL:
+            log_cost(ep, "images", p.path.name, client.model, 1, "image", cost)
         print(f"  {p.path.name}  ({p.reason})  ${cost or 0:.3f}")
     return budget.spent

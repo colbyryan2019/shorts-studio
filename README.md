@@ -2,7 +2,7 @@
 
 Turns a short episode outline into a finished vertical video, for any number of series. The design is in [SPEC.md](SPEC.md).
 
-**Status:** milestones 1–6: research, the script (with review and approval), reference images, shot images, narration with word timings and the full video (push-in, rock and drift motion, word-by-word captions, music, ambience, end card).
+**Status:** milestones 1–6 and 9: research, the script (with review and approval), reference images, shot images, narration with word timings, the full video (push-in, rock and drift motion, word-by-word captions, music, ambience, end card), a review sheet and cost log per episode, and `new_series.py`. Still to come: video and mixed modes (milestones 7–8).
 
 ## Setup
 
@@ -98,6 +98,8 @@ python make_episode.py --series stranded-at-sea --episode 1             # draw t
 python make_episode.py --series stranded-at-sea --episode 1 --redo 5    # redraw shot 5
 ```
 
+`--redo` and `--redo-voice` take one shot (`5`), a list (`3,7`), a range (`2-4`) or `all`, and can be repeated. They only run on an approved script, on their own (not with `--approve`, `--revise` or `--redo-script`). Redrawing a shot's image also re-renders its clip.
+
 - Re-running only redraws shots whose inputs changed: the image prompt, the style line, a reference image, the model or the quality. Editing one shot's `image_prompt` costs one image.
 - Quality is `image_quality` in `series.yaml` (`low`, `medium`, `high`).
 - `--fake-images` draws labeled placeholders for free.
@@ -136,6 +138,21 @@ python make_episode.py --series stranded-at-sea --episode 1 --fake-images --fake
 - Music, ambience and fonts are git-ignored (their licenses may not allow redistribution), so keep your own copies.
 - Each shot moves as its `motion` says: `pushin` (slow zoom), `rock` (gentle tilt and bob, like a boat on a swell) or `drift` (slow sideways pan). `genvideo` shots use the series `default_motion` until that milestone is built.
 - Re-running re-renders only clips whose image or narration changed, and skips the final build if nothing changed. The target length is 60–70 s (aim for 65); you'll get a note outside that.
+
+## Review sheet and cost
+
+Every run that gets past the images writes `episodes/epNN/review.md`: the title, length, the full narration, each shot with its length and motion (planned, and what was actually rendered), the claims with their source files, any video fallbacks, a `contact_sheet.png` of all the stills, and the cost summary. It has a short checklist; go through it before posting. Nothing is ever posted for you.
+
+Every paid call (each image, each ElevenLabs line) is appended to `episodes/epNN/cost.json` with its model, units and price. Images are priced in USD from their token usage; ElevenLabs lines are logged in characters, since they're billed against your plan's credits. Placeholder runs (`--fake-*`) aren't logged. Calls made before this was added aren't in the log.
+
+## Starting a new series
+
+```sh
+python new_series.py --name lost-in-the-desert                          # title from the name: "Lost In The Desert"
+python new_series.py --name lost-in-the-desert --title "Lost in the Desert"
+```
+
+This copies `templates/series/` into `series/<name>/`: a `series.yaml` with every setting and its default, a `bible.md` outline and a `style_line.txt`, plus empty `sources/`, `refs/` and `episodes/`. Fill in every `TODO:` line in the bible and style line (every command refuses to run until you do), check `series.yaml` (voice, word and shot ranges, end card, `sources_required`), then make refs, research and script as above. No code changes are needed.
 
 ## Tests
 

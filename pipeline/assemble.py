@@ -1,9 +1,12 @@
-"""Step 5: join the clips, narration, music, captions and end card into final.mp4.
+"""Step 5: join the clips, narration, music, ambience, captions and end card into final.mp4.
 
 One ffmpeg pass: clips joined with hard cuts; each narration line padded to its shot's length so
-it starts exactly at the shot's first frame; music looped, lowered and faded out underneath;
-caption and end-card PNGs overlaid at their times. final.json records a fingerprint of all inputs,
-so an unchanged episode isn't re-encoded.
+it starts exactly at the shot's first frame; music and an optional ambience bed (sfx/) each start at
+a fixed random point in their track, faded in and out underneath. Levels are measured, not guessed:
+the narration is brought to a standard loudness and each bed is set a fixed number of dB under it
+(music_volume_db, sfx_volume_db), whatever the track's own mastering. Captions are laid over
+as one stream of PNGs and the end card on top. final.json records a fingerprint of all inputs, so
+an unchanged episode isn't re-encoded.
 """
 
 from __future__ import annotations
@@ -17,15 +20,19 @@ from pathlib import Path
 from .captions import Overlay, build_overlays, caption_style, find_font
 from .episode import Episode
 from .errors import PipelineError
-from .ffmpeg import FPS, frames, run_ffmpeg
+from .ffmpeg import FPS, frames, loudness, run_ffmpeg
 from .motion import ClipPlan
 from .schema import Script
 from .series import Series
+from .voice import audio_seconds
 
-MUSIC_SUFFIXES = {".mp3", ".m4a", ".wav"}
+AUDIO_SUFFIXES = {".mp3", ".m4a", ".wav"}
+FADE_IN_SECONDS = 1.0
 MUSIC_FADE_SECONDS = 2.0
-TARGET_SECONDS = (25, 45)
-FINAL_VERSION = 1  # bump when assembly's output changes, so finals are rebuilt
+NARRATION_LUFS = -16.0  # standard loudness for spoken social video; beds are set relative to it
+PEAK_LIMIT = 0.89  # about -1 dBFS, so the mix never clips
+TARGET_SECONDS = (60, 70)  # every episode runs at least a minute; aim for 65 s
+FINAL_VERSION = 3  # bump when assembly's output changes, so finals are rebuilt
 
 
 @dataclass
@@ -35,70 +42,157 @@ class Assembly:
     music: Path | None
     font: Path | None
     rebuilt: bool
+    sfx: Path | None = None
 
 
-def pick_music(series: Series, root: Path, episode: int) -> Path | None:
-    """A track from the series' music/ (or assets/music/), the same one every run of this episode."""
-    for folder in (series.path / "music", root / "assets" / "music"):
+@dataclass(frozen=True)
+class Bed:
+    """A looping background track (music or ambience) and where in it this episode starts."""
+
+    path: Path
+    offset: float
+    gain_db: float  # applied to the track so it sits at its level under the narration
+
+
+def _pick_track(folders: list[Path], seed: str) -> Path | None:
+    for folder in folders:
         if folder.is_dir():
-            tracks = sorted(f for f in folder.iterdir() if f.suffix.lower() in MUSIC_SUFFIXES and not f.name.startswith("."))
+            tracks = sorted(f for f in folder.iterdir()
+                            if f.suffix.lower() in AUDIO_SUFFIXES and not f.name.startswith("."))
             if tracks:
-                return random.Random(f"{series.name}-{episode}").choice(tracks)
+                return random.Random(seed).choice(tracks)
     return None
 
 
-def _fingerprint(clips: list[ClipPlan], script: Script, timings: dict, audio: list[Path],
-                 music: Path | None, font: Path | None, series: Series) -> str:
+MUSIC_CHOICE = "music.txt"  # in the episode folder: a track chosen with --music
+
+
+def music_folders(series: Series, root: Path) -> list[Path]:
+    return [series.path / "music", root / "assets" / "music"]
+
+
+def pick_music(series: Series, root: Path, episode: int) -> Path | None:
+    """The track chosen with --music, else one from the series' music/ (or assets/music/) picked at
+    random, the same one every run of this episode."""
+    choice = series.episodes_dir / f"ep{episode:02d}" / MUSIC_CHOICE
+    if choice.is_file():
+        name = choice.read_text(encoding="utf-8").strip()
+        for folder in music_folders(series, root):
+            if (folder / name).is_file():
+                return folder / name
+        raise PipelineError(f"The music chosen for this episode ({name}) is no longer in "
+                            f"{' or '.join(str(f) for f in music_folders(series, root))}. Choose again with --music.")
+    return _pick_track(music_folders(series, root), f"{series.name}-{episode}")
+
+
+def choose_music(series: Series, root: Path, episode: int, query: str) -> Path:
+    """Save the one track whose file name contains `query` (any case) as this episode's music."""
+    tracks = sorted({f for folder in music_folders(series, root) if folder.is_dir()
+                     for f in folder.iterdir() if f.suffix.lower() in AUDIO_SUFFIXES and not f.name.startswith(".")})
+    matches = [t for t in tracks if query.lower() in t.name.lower()]
+    if len(matches) != 1:
+        listing = "\n".join(f"  {t.name}" for t in tracks) or "  (no tracks found)"
+        what = "No track" if not matches else f"{len(matches)} tracks"
+        raise PipelineError(f"{what} match '{query}'. Available:\n{listing}")
+    path = series.episodes_dir / f"ep{episode:02d}" / MUSIC_CHOICE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(matches[0].name + "\n", encoding="utf-8")
+    return matches[0]
+
+
+def pick_sfx(series: Series, root: Path, episode: int) -> Path | None:
+    """An ambience loop from the series' sfx/ (or assets/sfx/), the same one every run of this episode."""
+    return _pick_track([series.path / "sfx", root / "assets" / "sfx"], f"{series.name}-{episode}-sfx")
+
+
+def start_offset(track_seconds: float, needed: float, seed: str) -> float:
+    """Where to start in a track: a fixed random point that leaves enough track to play without
+    looping (skipping long quiet intros on long tracks), or 0 when the track is too short."""
+    room = track_seconds - needed - MUSIC_FADE_SECONDS
+    return round(random.Random(seed).uniform(0, room), 3) if room > 0 else 0.0
+
+
+def bed_gain(measured: float | None, level_db: float) -> float:
+    """Gain that puts a bed `level_db` under the standard narration loudness."""
+    return round(NARRATION_LUFS + level_db - measured, 2) if measured is not None else level_db
+
+
+def _bed(path: Path | None, needed: float, seed: str, level_db: float, probe, measure) -> Bed | None:
+    if path is None:
+        return None
+    track_seconds = probe(path)
+    offset = start_offset(track_seconds, needed, seed)
+    heard = measure([path], offset, needed) if offset else measure([path])  # a looped track: all of it
+    return Bed(path, offset, bed_gain(heard, level_db))
+
+
+def _fingerprint(clips: list[ClipPlan], script: Script, timings: dict, words: dict, audio: list[Path],
+                 beds: list[Bed], font: Path | None, series: Series, narration_gain: float) -> str:
     h = hashlib.sha256()
     h.update(json.dumps({
         "clips": [c.fingerprint for c in clips],
-        "lines": [[s.narration, *timings[s.n]] for s in script.shots],
+        "lines": [[s.narration, *timings[s.n], words.get(s.n)] for s in script.shots],
         "end_card": script.end_card,
-        "music": music.name if music else None,
-        "music_db": series.config.music_volume_db,
+        "beds": [[b.path.name, b.offset, b.gain_db] for b in beds],
+        "narration_gain": narration_gain,
         "caption_style": series.config.caption_style,
         "v": FINAL_VERSION,
     }).encode())
-    for p in [*audio, *(f for f in (music, font) if f)]:
+    for p in [*audio, *(b.path for b in beds), *([font] if font else [])]:
         h.update(hashlib.sha256(p.read_bytes()).digest())
     return h.hexdigest()
 
 
 def assemble(series: Series, ep: Episode, script: Script, clips: list[ClipPlan],
-             timings: dict[int, tuple[float, float]], root: Path) -> Assembly:
-    style = caption_style(series.config.caption_style)
-    music = pick_music(series, root, ep.number)
-    font = find_font(root / "assets" / "fonts")
+             timings: dict[int, tuple[float, float]], root: Path,
+             words: dict[int, list | None] | None = None, probe=None, measure=None) -> Assembly:
+    probe = probe or audio_seconds
+    measure = measure or loudness
+    words = words or {}
+    cfg = series.config
+    style = caption_style(cfg.caption_style)
+    font = find_font(root / "assets" / "fonts", cfg.caption_font)
     shot_seconds = [frames(timings[s.n][1]) / FPS for s in script.shots]
     total = sum(shot_seconds)
+    seed = f"{series.name}-{ep.number}"
+    music = _bed(pick_music(series, root, ep.number), total, seed + "-music-start", cfg.music_volume_db,
+                 probe, measure)
+    sfx = _bed(pick_sfx(series, root, ep.number), total, seed + "-sfx-start", cfg.sfx_volume_db, probe, measure)
+    beds = [b for b in (music, sfx) if b]
     final = ep.path / "final.mp4"
     record_path = ep.path / "final.json"
+    result = Assembly(final, total, music.path if music else None, font, rebuilt=False,
+                      sfx=sfx.path if sfx else None)
 
     audio = [ep.path / "audio" / f"{s.n:02d}.mp3" for s in script.shots]
-    fp = _fingerprint(clips, script, timings, audio, music, font, series)
+    spoken = measure(audio)
+    narration_gain = round(NARRATION_LUFS - spoken, 2) if spoken is not None else 0.0
+    fp = _fingerprint(clips, script, timings, words, audio, beds, font, series, narration_gain)
     if final.exists() and record_path.is_file():
         if json.loads(record_path.read_text(encoding="utf-8")).get("fingerprint") == fp:
-            return Assembly(final, total, music, font, rebuilt=False)
+            return result
 
-    overlays = build_overlays(
-        [(s.narration, timings[s.n][0], secs) for s, secs in zip(script.shots, shot_seconds)],
+    captions, end_card = build_overlays(
+        [(s.narration, timings[s.n][0], secs, words.get(s.n)) for s, secs in zip(script.shots, shot_seconds)],
         script.end_card, style, font, ep.path / "captions",
     )
     concat_list = ep.path / "clips" / "concat.txt"
     concat_list.write_text("".join(f"file '{c.path.name}'\n" for c in clips), encoding="utf-8")
+    caption_list = _caption_stream(captions, total, ep.path / "captions")
 
     args = ["-f", "concat", "-safe", "0", "-i", str(concat_list)]
     for a in audio:
         args += ["-i", str(a)]
-    music_index = None
-    if music:
-        music_index = 1 + len(audio)
-        args += ["-stream_loop", "-1", "-i", str(music)]
-    first_overlay = 1 + len(audio) + (1 if music else 0)
-    for o in overlays:
-        args += ["-i", str(o.png)]
+    bed_inputs = []
+    for k, b in enumerate(beds):
+        bed_inputs.append(1 + len(audio) + k)
+        # A track long enough is played from its offset without looping; a short one loops from the start.
+        args += (["-ss", f"{b.offset:.3f}"] if b.offset else ["-stream_loop", "-1"]) + ["-i", str(b.path)]
+    caption_input = 1 + len(audio) + len(beds)
+    args += ["-f", "concat", "-safe", "0", "-i", str(caption_list), "-i", str(end_card.png)]
 
-    graph = _video_graph(overlays, first_overlay) + _audio_graph(audio, shot_seconds, music_index, total, series)
+    graph = (_video_graph(caption_input, end_card)
+             + _audio_graph(audio, shot_seconds, list(zip(bed_inputs, beds)), total, narration_gain))
     tmp = final.with_name("final.tmp.mp4")
     args += [
         "-filter_complex", ";".join(graph), "-map", "[v]", "-map", "[a]",
@@ -110,37 +204,73 @@ def assemble(series: Series, ep: Episode, script: Script, clips: list[ClipPlan],
     tmp.replace(final)
     record_path.write_text(json.dumps({
         "fingerprint": fp, "seconds": round(total, 3),
-        "music": music.name if music else None, "font": font.name if font else None,
+        "narration_gain_db": narration_gain,
+        "music": music.path.name if music else None, "music_start": music.offset if music else None,
+        "music_gain_db": music.gain_db if music else None,
+        "sfx": sfx.path.name if sfx else None, "sfx_start": sfx.offset if sfx else None,
+        "sfx_gain_db": sfx.gain_db if sfx else None,
+        "font": font.name if font else None,
     }, indent=2) + "\n", encoding="utf-8")
-    return Assembly(final, total, music, font, rebuilt=True)
+    result.rebuilt = True
+    return result
 
 
-def _video_graph(overlays: list[Overlay], first_input: int) -> list[str]:
-    graph, last = [], "0:v"
-    for i, o in enumerate(overlays):
-        out = f"v{i}"
-        graph.append(f"[{last}][{first_input + i}:v]overlay=0:0:enable='between(t,{o.start:.3f},{o.end:.3f})'[{out}]")
-        last = out
-    graph.append(f"[{last}]format=yuv420p[v]")
-    return graph
+def _caption_stream(captions: list[Overlay], total: float, folder: Path) -> Path:
+    """An ffconcat list showing each caption PNG for its time, with a blank frame in any gaps.
+
+    One input instead of one per caption keeps the ffmpeg graph small however many words there are.
+    """
+    from PIL import Image
+
+    from .ffmpeg import HEIGHT, WIDTH
+
+    blank = folder / "blank.png"
+    Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0)).save(blank)
+    entries, t = [], 0.0
+    for c in captions:
+        if c.start > t + 0.001:
+            entries.append((blank, c.start - t))
+        entries.append((c.png, c.end - c.start))
+        t = c.end
+    if total > t + 0.001:
+        entries.append((blank, total - t))
+    lines = ["ffconcat version 1.0"]
+    for png, secs in entries:
+        lines += [f"file '{png.name}'", f"duration {secs:.3f}"]
+    lines.append(f"file '{entries[-1][0].name}'" if entries else f"file '{blank.name}'")  # holds the last one
+    path = folder / "captions.txt"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
 
 
-def _audio_graph(audio: list[Path], shot_seconds: list[float], music_index: int | None,
-                 total: float, series: Series) -> list[str]:
+def _video_graph(caption_input: int, end_card: Overlay) -> list[str]:
+    return [
+        f"[0:v][{caption_input}:v]overlay=0:0:eof_action=pass[vc]",
+        f"[vc][{caption_input + 1}:v]overlay=0:0:enable='between(t,{end_card.start:.3f},{end_card.end:.3f})'[ve]",
+        "[ve]format=yuv420p[v]",
+    ]
+
+
+def _audio_graph(audio: list[Path], shot_seconds: list[float], beds: list[tuple[int, Bed]],
+                 total: float, narration_gain: float = 0.0) -> list[str]:
     graph = []
     for i, secs in enumerate(shot_seconds):
         # Pad (or trim) each line to exactly its shot's length, so line i starts with shot i.
         graph.append(f"[{1 + i}:a]aresample=44100,aformat=channel_layouts=stereo,"
                      f"apad=whole_dur={secs:.3f},atrim=0:{secs:.3f}[n{i}]")
-    graph.append("".join(f"[n{i}]" for i in range(len(audio))) + f"concat=n={len(audio)}:v=0:a=1[narr]")
-    if music_index is None:
-        graph.append("[narr]anull[a]")
+    graph.append("".join(f"[n{i}]" for i in range(len(audio)))
+                 + f"concat=n={len(audio)}:v=0:a=1,volume={narration_gain}dB[narr]")
+    limiter = f"alimiter=limit={PEAK_LIMIT}:level=disabled"
+    if not beds:
+        graph.append(f"[narr]{limiter}[a]")
         return graph
     fade_start = max(total - MUSIC_FADE_SECONDS, 0)
-    graph.append(f"[{music_index}:a]aresample=44100,aformat=channel_layouts=stereo,atrim=0:{total:.3f},"
-                 f"volume={series.config.music_volume_db}dB,"
-                 f"afade=t=out:st={fade_start:.3f}:d={MUSIC_FADE_SECONDS}[mus]")
-    graph.append("[narr][mus]amix=inputs=2:duration=first:normalize=0[a]")
+    for k, (index, bed) in enumerate(beds):
+        graph.append(f"[{index}:a]aresample=44100,aformat=channel_layouts=stereo,atrim=0:{total:.3f},"
+                     f"asetpts=PTS-STARTPTS,volume={bed.gain_db}dB,afade=t=in:st=0:d={FADE_IN_SECONDS},"
+                     f"afade=t=out:st={fade_start:.3f}:d={MUSIC_FADE_SECONDS}[bed{k}]")
+    labels = "[narr]" + "".join(f"[bed{k}]" for k in range(len(beds)))
+    graph.append(f"{labels}amix=inputs={1 + len(beds)}:duration=first:normalize=0,{limiter}[a]")
     return graph
 
 

@@ -2,7 +2,7 @@
 
 Turns a short episode outline into a finished vertical video, for any number of series. The design is in [SPEC.md](SPEC.md).
 
-**Status:** milestones 1–5: research, the script (with review and approval), reference images, shot images, narration and the full video (push-in, rock and drift motion, captions, music, end card).
+**Status:** milestones 1–6: research, the script (with review and approval), reference images, shot images, narration with word timings and the full video (push-in, rock and drift motion, word-by-word captions, music, ambience, end card).
 
 ## Setup
 
@@ -113,7 +113,9 @@ python make_episode.py --series stranded-at-sea --episode 1 --redo-voice 4    # 
 python make_episode.py --series stranded-at-sea --episode 1 --fake-voice      # silent placeholder lines, free
 ```
 
-- One request per line, so each shot's length is exact: line length + 0.3 s (at least 1.5 s). The total is printed at the end.
+- One request per line, so each shot's length is exact: line length + `line_pause_seconds` (default 0.3 s; at least 1.5 s). The total is printed at the end.
+- Each line also records when every word is spoken, for word-by-word captions. Lines read before this was added are re-read once.
+- Optional `voice_settings` in `series.yaml` (`stability`, `similarity_boost`, `style`, `speed`, `use_speaker_boost`) tune the delivery; changing them re-reads the lines.
 - Re-running only re-reads lines whose narration, voice or model changed. Editing one line costs one line.
 - ElevenLabs bills characters against your plan's credits; `--dry-run` shows how many a run will use.
 - Until the voice is set up, runs still draw images and just skip narration with a note.
@@ -127,11 +129,13 @@ python make_episode.py --series stranded-at-sea --episode 1                     
 python make_episode.py --series stranded-at-sea --episode 1 --fake-images --fake-voice   # whole pipeline, free
 ```
 
-- **Music:** put royalty-free `.mp3` tracks in `assets/music/` (or `series/<name>/music/` for that series only). Each episode picks one and keeps it on every run.
-- **Captions:** put one `.ttf` / `.otf` font in `assets/fonts/` (a bold one, such as Montserrat Black or Anton). Style is `caption_style` in `series.yaml`: `bold_white_outline` or `plain_white`.
-- Music and fonts are git-ignored (their licenses may not allow redistribution), so keep your own copies.
+- **Music:** put royalty-free `.mp3` tracks in `assets/music/` (or `series/<name>/music/` for that series only). Any length works. Each episode picks one track and a starting point in it, keeps both on every run, and fades the music in and out. `--music NAME` picks the track whose file name contains NAME for that episode instead.
+- **Levels:** the narration is brought to a standard loudness (-16 LUFS), and music sits `music_volume_db` under it (default -20; more negative is quieter), measured per track, so loud and quiet masters end up at the same level.
+- **Ambience:** optional looping beds (waves, wind) in `assets/sfx/` (or `series/<name>/sfx/`), picked and placed the same way, at `sfx_volume_db` (default -26).
+- **Captions:** put `.ttf` / `.otf` fonts in `assets/fonts/`; `caption_font` in `series.yaml` picks one by file name (default: the first). Style is `caption_style`: `highlight_word` (a few words at a time, the spoken word in yellow), `bold_white_outline` or `plain_white`.
+- Music, ambience and fonts are git-ignored (their licenses may not allow redistribution), so keep your own copies.
 - Each shot moves as its `motion` says: `pushin` (slow zoom), `rock` (gentle tilt and bob, like a boat on a swell) or `drift` (slow sideways pan). `genvideo` shots use the series `default_motion` until that milestone is built.
-- Re-running re-renders only clips whose image or narration changed, and skips the final build if nothing changed. The target length is 25–45 s; you'll get a note outside that.
+- Re-running re-renders only clips whose image or narration changed, and skips the final build if nothing changed. The target length is 60–70 s (aim for 65); you'll get a note outside that.
 
 ## Tests
 

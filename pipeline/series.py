@@ -20,6 +20,21 @@ RECENT_EPISODES = 3
 EPISODE_DIR_RE = re.compile(r"^ep(\d+)$")
 
 
+class VoiceSettings(BaseModel):
+    """Optional ElevenLabs delivery settings; anything left out uses the voice's own default."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    stability: float | None = Field(default=None, ge=0, le=1)
+    similarity_boost: float | None = Field(default=None, ge=0, le=1)
+    style: float | None = Field(default=None, ge=0, le=1)
+    speed: float | None = Field(default=None, ge=0.7, le=1.2)
+    use_speaker_boost: bool | None = None
+
+    def as_dict(self) -> dict:
+        return self.model_dump(exclude_none=True)
+
+
 class SeriesConfig(BaseModel):
     """series.yaml. Unknown keys are rejected so typos don't silently do nothing."""
 
@@ -33,7 +48,11 @@ class SeriesConfig(BaseModel):
     end_card_format: str = ""
     default_motion: Literal["pushin", "rock", "drift"]
     caption_style: str = ""
+    caption_font: str = ""  # a file in assets/fonts; empty = the first font found there
     music_volume_db: float = -20
+    sfx_volume_db: float = -26  # ambience bed from sfx/; no files = no bed
+    line_pause_seconds: float = Field(default=0.3, ge=0, le=3)  # silence after each line
+    voice_settings: VoiceSettings | None = None
     sources_required: bool = True
     research_max_searches: int = Field(default=5, ge=1, le=20)
     research_max_fetches: int = Field(default=3, ge=1, le=10)

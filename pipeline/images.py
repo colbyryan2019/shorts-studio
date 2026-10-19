@@ -42,7 +42,9 @@ def shot_prompt(series: Series, shot: Shot) -> str:
             "",
             "Draw these exactly as they look in the reference images, in the same order: "
             + "; ".join(f"image {i}: the {name}" for i, name in enumerate(shot.refs, start=1))
-            + ". Keep their shapes, proportions and details identical; only pose and placement change.",
+            + ". Keep their shapes, proportions and details identical; only pose and placement change. "
+            "The reference images are a guide only: draw one single continuous scene filling the whole frame, "
+            "never a split, panels or a separate copy of a reference.",
         ]
     parts += ["", "Vertical 9:16 frame. No text, captions or borders."]
     return "\n".join(parts)

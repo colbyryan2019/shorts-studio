@@ -1,8 +1,10 @@
 """Captions and the end card, drawn as transparent 1080x1920 PNGs that assembly lays over the video.
 
 Drawn with Pillow rather than ffmpeg's subtitle filters, so any ffmpeg build works. Timings come
-from the narration (no transcription): each line is split into short phrases, shown one at a time,
-each for a share of the line's spoken length in proportion to its characters.
+from the narration (no transcription): each line is split into short phrases, shown one at a time.
+`highlight_word` shows each phrase with the word being spoken in a highlight colour, timed from the
+voice's word timings; the other styles give each phrase a share of the line's spoken length in
+proportion to its characters (as does `highlight_word` for a line without word timings).
 """
 
 from __future__ import annotations
@@ -32,6 +34,7 @@ class TextStyle:
     stroke_fill: tuple[int, int, int]
     center_y: float  # vertical centre of the text, as a fraction of the frame height
     upper: bool
+    highlight: tuple[int, int, int] | None = None  # colour of the word being spoken (word-timed styles)
 
 
 # Named styles for series.yaml's caption_style. Captions sit in the lower middle, clear of the
@@ -41,6 +44,8 @@ CAPTION_STYLES = {
                                     center_y=0.66, upper=True),
     "plain_white": TextStyle(size=80, fill=(255, 255, 255), stroke=3, stroke_fill=(0, 0, 0),
                              center_y=0.66, upper=False),
+    "highlight_word": TextStyle(size=96, fill=(255, 255, 255), stroke=8, stroke_fill=(0, 0, 0),
+                                center_y=0.62, upper=True, highlight=(255, 210, 40)),
 }
 DEFAULT_CAPTION_STYLE = "bold_white_outline"
 END_CARD_STYLE = TextStyle(size=104, fill=(255, 255, 255), stroke=4, stroke_fill=(0, 0, 0),
@@ -61,8 +66,13 @@ def caption_style(name: str) -> TextStyle:
     return CAPTION_STYLES[name]
 
 
-def find_font(fonts_dir: Path) -> Path | None:
-    """The first .ttf/.otf in assets/fonts, or None (then Pillow's built-in font is used)."""
+def find_font(fonts_dir: Path, name: str = "") -> Path | None:
+    """`name` from assets/fonts if given, else the first .ttf/.otf there, or None (Pillow's built-in font)."""
+    if name:
+        path = fonts_dir / name
+        if not path.is_file():
+            raise PipelineError(f"caption_font '{name}' is not in {fonts_dir}")
+        return path
     if not fonts_dir.is_dir():
         return None
     found = sorted(f for f in fonts_dir.iterdir() if f.suffix.lower() in FONT_SUFFIXES and not f.name.startswith("."))
@@ -116,10 +126,8 @@ def _wrap(draw: ImageDraw.ImageDraw, text: str, font, stroke: int) -> list[str]:
     return lines + [current] if current else lines
 
 
-def render_text(text: str, style: TextStyle, font_path: Path | None, out: Path) -> None:
-    text = text.upper() if style.upper else text
-    img = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
+def _fit(draw: ImageDraw.ImageDraw, text: str, style: TextStyle, font_path: Path | None):
+    """(font, size, lines) for `text`: one line if a slightly smaller size fits, else at most two."""
     size = style.size
     font = _font(font_path, size)
     lines = _wrap(draw, text, font, style.stroke)
@@ -137,6 +145,14 @@ def render_text(text: str, style: TextStyle, font_path: Path | None, out: Path) 
         size -= 6
         font = _font(font_path, size)
         lines = _wrap(draw, text, font, style.stroke)
+    return font, size, lines
+
+
+def render_text(text: str, style: TextStyle, font_path: Path | None, out: Path) -> None:
+    text = text.upper() if style.upper else text
+    img = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    font, size, lines = _fit(draw, text, style, font_path)
     draw.multiline_text(
         (WIDTH / 2, HEIGHT * style.center_y), "\n".join(lines), font=font, anchor="mm", align="center",
         fill=style.fill, stroke_width=style.stroke, stroke_fill=style.stroke_fill, spacing=size // 5,
@@ -144,25 +160,73 @@ def render_text(text: str, style: TextStyle, font_path: Path | None, out: Path) 
     img.save(out, format="PNG")
 
 
-def build_overlays(timings: list[tuple[str, float, float]], end_card: str, style: TextStyle,
-                   font_path: Path | None, out_dir: Path) -> list[Overlay]:
-    """Caption PNGs for every phrase plus the end card.
+def render_words(words: list[str], highlight: int, style: TextStyle, font_path: Path | None, out: Path) -> None:
+    """A phrase drawn word by word, so the word at index `highlight` can take the highlight colour."""
+    words = [w.upper() if style.upper else w for w in words]
+    img = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    font, size, lines = _fit(draw, " ".join(words), style, font_path)
+    space = draw.textlength(" ", font=font)
+    line_height = size + size // 5
+    y = HEIGHT * style.center_y - line_height * (len(lines) - 1) / 2
+    i = 0
+    for line in lines:
+        line_words = line.split()
+        x = WIDTH / 2 - draw.textlength(line, font=font) / 2
+        for word in line_words:
+            colour = style.highlight if i == highlight and style.highlight else style.fill
+            draw.text((x, y), word, font=font, anchor="lm", fill=colour,
+                      stroke_width=style.stroke, stroke_fill=style.stroke_fill)
+            x += draw.textlength(word, font=font) + space
+            i += 1
+        y += line_height
+    img.save(out, format="PNG")
 
-    `timings` is (narration, line_seconds, shot_seconds) per shot, in order.
+
+def word_segments(text: str, words: list[tuple[str, float, float]] | None, start: float,
+                  shot_end: float) -> list[tuple[list[str], int, float, float]] | None:
+    """(phrase words, index of the spoken word, start, end) per spoken word, or None if the timings
+    don't line up with the text. Each word stays highlighted until the next one starts; the last
+    holds to the end of the shot."""
+    phrases = [p.split() for p in split_phrases(text)]
+    if not words or sum(len(p) for p in phrases) != len(words):
+        return None
+    segments, k = [], 0
+    for phrase in phrases:
+        for i in range(len(phrase)):
+            seg_start = start if k == 0 else start + words[k][1]
+            seg_end = shot_end if k == len(words) - 1 else start + words[k + 1][1]
+            segments.append((phrase, i, round(seg_start, 3), round(seg_end, 3)))
+            k += 1
+    return segments
+
+
+def build_overlays(timings: list[tuple[str, float, float, list | None]], end_card: str, style: TextStyle,
+                   font_path: Path | None, out_dir: Path) -> tuple[list[Overlay], Overlay]:
+    """Caption PNGs (in order, never overlapping) and the end card.
+
+    `timings` is (narration, line_seconds, shot_seconds, word timings or None) per shot, in order.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     for old in out_dir.glob("*.png"):
         old.unlink()
-    overlays, t, k = [], 0.0, 0
-    for text, line_seconds, shot_seconds in timings:
-        phrases = split_phrases(text)
-        for phrase, (start, end) in zip(phrases, phrase_times(phrases, t, line_seconds, t + shot_seconds)):
-            k += 1
-            png = out_dir / f"cap{k:03d}.png"
-            render_text(phrase, style, font_path, png)
-            overlays.append(Overlay(png, start, end))
+    captions, t, k = [], 0.0, 0
+    for text, line_seconds, shot_seconds, words in timings:
+        segments = word_segments(text, words, t, t + shot_seconds) if style.highlight else None
+        if segments:
+            for phrase, i, start, end in segments:
+                k += 1
+                png = out_dir / f"cap{k:03d}.png"
+                render_words(phrase, i, style, font_path, png)
+                captions.append(Overlay(png, start, end))
+        else:
+            phrases = split_phrases(text)
+            for phrase, (start, end) in zip(phrases, phrase_times(phrases, t, line_seconds, t + shot_seconds)):
+                k += 1
+                png = out_dir / f"cap{k:03d}.png"
+                render_text(phrase, style, font_path, png)
+                captions.append(Overlay(png, start, end))
         t += shot_seconds
     card = out_dir / "end_card.png"
     render_text(end_card, END_CARD_STYLE, font_path, card)
-    overlays.append(Overlay(card, round(max(t - END_CARD_SECONDS, 0.0), 3), round(t, 3)))
-    return overlays
+    return captions, Overlay(card, round(max(t - END_CARD_SECONDS, 0.0), 3), round(t, 3))

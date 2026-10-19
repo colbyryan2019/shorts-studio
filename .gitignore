@@ -8,3 +8,5 @@ assets/music/*
 !assets/music/.gitkeep
 assets/fonts/*
 !assets/fonts/.gitkeep
+assets/sfx/*
+!assets/sfx/.gitkeep

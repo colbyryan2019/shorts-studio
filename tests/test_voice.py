@@ -10,8 +10,8 @@ from pipeline.episode import Episode
 from pipeline.errors import PipelineError
 from pipeline.schema import validate_script
 from pipeline.series import load_series
-from pipeline.voice import (FakeVoiceClient, _explain, audio_seconds, make_voice, make_voice_client, plan_voice,
-                            shot_durations, shot_seconds)
+from pipeline.voice import (FakeVoiceClient, Speech, _explain, audio_seconds, make_voice, make_voice_client,
+                            plan_voice, shot_durations, shot_seconds, word_timings, words_from_alignment)
 
 needs_ffmpeg = pytest.mark.skipif(not (shutil.which("ffmpeg") and shutil.which("ffprobe")), reason="needs ffmpeg")
 
@@ -26,7 +26,7 @@ class StubVoice:
 
     def speak(self, text, previous_text, next_text):
         self.calls.append((text, previous_text, next_text))
-        return b"mp3:" + text.encode()
+        return Speech(b"mp3:" + text.encode(), [(w, i * 0.3, i * 0.3 + 0.25) for i, w in enumerate(text.split())])
 
 
 def probe(path):
@@ -45,8 +45,8 @@ def _script(series, ep):
     return validate_script(ep.load_script_data(), series).script
 
 
-def _read(ep, script, client, redo=()):
-    plans = plan_voice(ep, script, client.voice_id, client.model, set(redo))
+def _read(ep, script, client, redo=(), settings=None):
+    plans = plan_voice(ep, script, client.voice_id, client.model, set(redo), settings)
     make_voice(client, ep, plans, probe=probe)
     return plans
 
@@ -54,6 +54,38 @@ def _read(ep, script, client, redo=()):
 def test_shot_seconds_adds_pause_with_a_minimum():
     assert shot_seconds(2.0) == 2.3
     assert shot_seconds(0.4) == 1.5
+    assert shot_seconds(2.0, pause=0.6) == 2.6
+
+
+def test_words_are_grouped_from_character_timings():
+    text = "Don't  drink."
+    starts = [i * 0.1 for i in range(len(text))]
+    ends = [s + 0.1 for s in starts]
+    assert words_from_alignment(list(text), starts, ends) == [("Don't", 0.0, 0.5), ("drink.", 0.7, 1.3)]
+
+
+def test_voice_settings_reread_only_when_set(episode):
+    series, ep = episode
+    script = _script(series, ep)
+    client = StubVoice()
+    _read(ep, script, client)
+    client.calls.clear()
+    _read(ep, script, client, settings=None)
+    assert client.calls == []  # no settings: earlier lines stay valid
+    _read(ep, script, client, settings={"stability": 0.4})
+    assert len(client.calls) == len(script.shots)
+
+
+def test_lines_without_word_timings_are_reread(episode):
+    series, ep = episode
+    script = _script(series, ep)
+    _read(ep, script, StubVoice())
+    path = ep.path / "audio" / "manifest.json"
+    manifest = json.loads(path.read_text())
+    del manifest["02.mp3"]["words"]
+    path.write_text(json.dumps(manifest))
+    plans = plan_voice(ep, script, "stub-voice", "stub-model", set())
+    assert [p.reason for p in plans if p.reason] == ["no word timings yet"]
 
 
 def test_lines_are_cached_and_reread_only_when_they_change(episode):
@@ -108,9 +140,12 @@ def test_manifest_records_durations_for_later_steps(episode):
     first = manifest["01.mp3"]
     assert first["text"] == script.shots[0].narration
     assert first["characters"] == len(script.shots[0].narration)
-    assert first["shot_seconds"] == shot_seconds(first["line_seconds"])
+    assert first["words"][0][0] == script.shots[0].narration.split()[0]
     durations = shot_durations(ep, script)
     assert list(durations) == [s.n for s in script.shots]
+    assert durations[1] == shot_seconds(first["line_seconds"])
+    assert shot_durations(ep, script, pause=1.0)[1] == shot_seconds(first["line_seconds"], 1.0)
+    assert word_timings(ep, script)[1][0][0] == script.shots[0].narration.split()[0]
 
     data = ep.load_script_data()
     data["shots"][0]["narration"] = "A different first line."
@@ -204,7 +239,9 @@ def test_cli_fake_voice_end_to_end(episode, project, capsys, no_video):
 
 @needs_ffmpeg
 def test_fake_voice_makes_real_mp3(tmp_path):
-    audio = FakeVoiceClient().speak("one two three four five six", "", "")
+    speech = FakeVoiceClient().speak("one two three four five six", "", "")
     path = tmp_path / "a.mp3"
-    path.write_bytes(audio)
+    path.write_bytes(speech.audio)
     assert audio_seconds(path) == pytest.approx(6 / 2.7, abs=0.15)
+    assert [w for w, _, _ in speech.words] == "one two three four five six".split()
+    assert speech.words[-1][2] == pytest.approx(6 / 2.7, abs=0.01)

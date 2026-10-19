@@ -13,7 +13,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from pipeline.assemble import assemble, length_warning
+from pipeline.assemble import assemble, choose_music, length_warning
 from pipeline.config import PROJECT_ROOT, load_settings
 from pipeline.episode import Episode
 from pipeline.errors import PipelineError
@@ -26,7 +26,7 @@ from pipeline.script import format_summary, planned_calls, write_script
 from pipeline.series import Series, load_series
 from pipeline.voice import FAKE_MODEL as FAKE_VOICE_MODEL
 from pipeline.voice import (VoiceClient, describe_voice_plan, make_voice, make_voice_client, narration_timings,
-                            plan_voice, voice_setup_problem)
+                            plan_voice, voice_setup_problem, word_timings)
 
 
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -43,6 +43,8 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--redo", type=int, action="append", default=[], metavar="N",
                    help="redraw shot N's image even if it is up to date (repeatable)")
     p.add_argument("--fake-voice", action="store_true", help="make silent placeholder narration instead of calling ElevenLabs")
+    p.add_argument("--music", metavar="NAME",
+                   help="use the track whose file name contains NAME for this episode (kept for later runs)")
     p.add_argument("--redo-voice", type=int, action="append", default=[], metavar="N",
                    help="re-read shot N's narration even if it is up to date (repeatable)")
     args = p.parse_args(argv)
@@ -78,6 +80,8 @@ def run(argv: list[str] | None = None, root: Path = PROJECT_ROOT,
     series = load_series(args.series, root, args.episode)
     ep = Episode.of(series, args.episode)
     missing_sources_ok = args.fake_llm and not series.sources
+    if args.music:
+        print(f"Music for episode {args.episode}: {choose_music(series, root, args.episode, args.music).name}\n")
     revising = args.revise is not None
 
     if args.outline:
@@ -161,7 +165,9 @@ def run(argv: list[str] | None = None, root: Path = PROJECT_ROOT,
         problem = voice_setup_problem(series, root)
         voice_ready = problem is None
         voice_id, voice_model = series.config.voice_id, load_settings(root).voice_model
-    voice_plans = plan_voice(ep, result.script, voice_id, voice_model, set(args.redo_voice))
+    cfg = series.config
+    voice_settings = cfg.voice_settings.as_dict() if cfg.voice_settings and not args.fake_voice else None
+    voice_plans = plan_voice(ep, result.script, voice_id, voice_model, set(args.redo_voice), voice_settings)
     print()
     if voice_ready:
         print(describe_voice_plan(voice_plans))
@@ -185,9 +191,9 @@ def run(argv: list[str] | None = None, root: Path = PROJECT_ROOT,
         if any(p.reason for p in voice_plans):
             voice = voice_client or make_voice_client(args.fake_voice, series, root)
             print(f"\nReading narration with {voice.model}...")
-            durations = make_voice(voice, ep, voice_plans)
-        else:
-            durations = make_voice(None, ep, voice_plans)  # nothing to read; just collects durations
+            durations = make_voice(voice, ep, voice_plans, pause=cfg.line_pause_seconds)
+        else:  # nothing to read; just collects durations
+            durations = make_voice(None, ep, voice_plans, pause=cfg.line_pause_seconds)
         total = sum(seconds for _, seconds in durations)
         print(f"\nNarration is in {ep.path / 'audio'}: {total:.1f}s of video at {len(durations)} shots. "
               "Listen through; --redo-voice N re-reads one line, and editing a line's narration re-reads just it.")
@@ -195,18 +201,20 @@ def run(argv: list[str] | None = None, root: Path = PROJECT_ROOT,
         print("\nVideo: waits for narration (set up ElevenLabs, or use --fake-voice for silent placeholder audio).")
         return 0
 
-    timings = narration_timings(ep, result.script)
+    timings = narration_timings(ep, result.script, cfg.line_pause_seconds)
     clips = plan_clips(ep, result.script, {n: shot for n, (_, shot) in timings.items()}, set(args.redo),
                        series.config.default_motion)
     if any(c.reason for c in clips):
         print("\nRendering clips...")
         make_clips(ep, clips)
     print("\nAssembling final.mp4...")
-    built = assemble(series, ep, result.script, clips, timings, root)
+    built = assemble(series, ep, result.script, clips, timings, root, word_timings(ep, result.script))
     if not built.rebuilt:
         print("  nothing changed since the last build")
     if built.music is None:
         print(f"  Note: no music found in {series.path / 'music'} or {root / 'assets' / 'music'}; narration only.")
+    if built.sfx is None:
+        print(f"  Note: no ambience in {series.path / 'sfx'} or {root / 'assets' / 'sfx'}; music and narration only.")
     if built.font is None:
         print(f"  Note: no font in {root / 'assets' / 'fonts'}; captions use Pillow's built-in font.")
     if warning := length_warning(built.seconds):

@@ -6,10 +6,12 @@ shots: [12, 16]
 max_genvideo_shots: 2
 end_card_format: ""              # e.g. "DAY {day} · WATER: {water}"; the script fills it in
 default_motion: pushin           # pushin | rock | drift
+hook_motion: punchin             # shot 1 (the hook): punchin (fast zoom) | pushin | rock | drift | "" (as scripted)
 caption_style: highlight_word    # highlight_word | bold_white_outline | plain_white
 caption_font: ""                 # optional: a file in assets/fonts, e.g. Anton-Regular.ttf (empty = first one)
 music_volume_db: -20             # dB under the narration (more negative = quieter)
 sfx_volume_db: -26               # ambience bed from sfx/ (or assets/sfx/); no files = no bed
+music_fade_in_seconds: 0         # music and ambience fade-in; 0 = full level from the first frame (hits harder)
 line_pause_seconds: 0.3          # silence after each line; raise for slower, heavier pacing
 # voice_settings:                # optional ElevenLabs delivery; leave out to use the voice's defaults
 #   stability: 0.5               # lower = more expressive, higher = steadier

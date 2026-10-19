@@ -16,6 +16,7 @@ from .cost import log_cost
 from .episode import Episode
 from .errors import PipelineError
 from .imagegen import FAKE_MODEL, ROUGH_COST_PER_IMAGE, Budget, ImageClient, fit_to_frame
+from .reuse import find_moved
 from .schema import Script, Shot
 from .series import Series
 
@@ -30,6 +31,7 @@ class ShotPlan:
     refs: list[Path]
     fingerprint: str
     reason: str  # why it will be drawn; "" means the existing image is reused
+    copy_from: str = ""  # an identical image under another shot number, copied instead of drawn
 
 
 def images_dir(ep: Episode) -> Path:
@@ -90,12 +92,15 @@ def plan_images(series: Series, ep: Episode, script: Script, model: str, redo: s
             reason = "changed since last drawn"
         else:
             reason = ""
-        plans.append(ShotPlan(shot, path, prompt, refs, fp, reason))
+        moved = find_moved(manifest, images_dir(ep), path.name, fp) if reason and shot.n not in redo else ""
+        if moved:
+            reason = f"same as {moved} (copied, free)"
+        plans.append(ShotPlan(shot, path, prompt, refs, fp, reason, moved))
     return plans
 
 
 def describe_plan(plans: list[ShotPlan], quality: str) -> str:
-    todo = [p for p in plans if p.reason]
+    todo = [p for p in plans if p.reason and not p.copy_from]
     lines = [f"Images: {len(todo)} to draw, {len(plans) - len(todo)} reused"]
     for p in plans:
         refs = f" refs: {', '.join(r.stem for r in p.refs)}" if p.refs else ""
@@ -112,7 +117,7 @@ def make_images(client: ImageClient, series: Series, ep: Episode, plans: list[Sh
     out.mkdir(parents=True, exist_ok=True)
     manifest = _read_manifest(ep)
     for p in plans:
-        if not p.reason:
+        if not p.reason or p.copy_from:
             continue
         budget.check_next()
         image = client.generate(p.prompt, series.config.image_size, p.refs)

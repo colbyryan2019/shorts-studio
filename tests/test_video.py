@@ -1,17 +1,20 @@
 import json
 import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageChops, ImageStat
 
 import make_episode
-from pipeline.assemble import NARRATION_LUFS, bed_gain, choose_music, length_warning, pick_music, pick_sfx, start_offset
+from pipeline.assemble import (NARRATION_LUFS, Bed, _audio_graph, bed_gain, choose_music, length_warning, pick_music,
+                               pick_sfx, start_offset)
 from pipeline.captions import (caption_style, find_font, phrase_times, render_text, render_words, split_phrases,
                                word_segments)
 from pipeline.episode import Episode
 from pipeline.errors import PipelineError
-from pipeline.motion import render_drift, render_rock, rendered_motion
+from pipeline.motion import plan_clips, render_drift, render_punchin, render_pushin, render_rock, rendered_motion
+from pipeline.schema import validate_script
 from pipeline.series import load_series
 
 needs_ffmpeg = pytest.mark.skipif(not (shutil.which("ffmpeg") and shutil.which("ffprobe")), reason="needs ffmpeg")
@@ -255,3 +258,47 @@ def test_word_captions_and_ambience_end_to_end(project, series_dir, good_script,
     assert yellow > 200
     words = sum(len(s["narration"].split()) for s in good_script["shots"])
     assert len(list((ep.path / "captions").glob("cap*.png"))) == words  # one caption per spoken word
+
+
+def test_hook_motion_overrides_shot_one_only(project, good_script):
+    series = load_series("test-series", project, 1)
+    ep = Episode.of(series, 1)
+    ep.save_script(good_script)
+    (ep.path / "images").mkdir()
+    for n in range(1, 11):
+        Image.new("RGB", (8, 8)).save(ep.path / "images" / f"{n:02d}.png")
+    script = validate_script(good_script, series, missing_sources_ok=True).script
+    durations = {n: 2.0 for n in range(1, 11)}
+    plain = plan_clips(ep, script, durations, set(), "rock")
+    hooked = plan_clips(ep, script, durations, set(), "rock", "punchin")
+    assert (hooked[0].motion, hooked[0].note) == ("punchin", "hook_motion")
+    assert [c.motion for c in hooked[1:]] == [c.motion for c in plain[1:]]
+    assert hooked[0].fingerprint != plain[0].fingerprint  # switching the hook re-renders shot 1
+    assert (plain[4].motion, plain[4].note) == ("rock", "genvideo not built yet")
+
+
+@needs_ffmpeg
+def test_punchin_lands_early(tmp_path):
+    img = Image.new("L", (1080, 1920), 0)
+    for x in range(0, 1080, 60):  # vertical stripes: zooming in spreads them apart
+        img.paste(255, (x, 0, x + 30, 1920))
+    src = tmp_path / "stripes.png"
+    img.convert("RGB").save(src)
+
+    def moved(render):
+        out = tmp_path / f"{render.__name__}.mp4"
+        render(src, out, 30)
+        f = _gray_frames(out)
+        diff = lambda a, b: ImageStat.Stat(ImageChops.difference(a, b)).sum[0]
+        return diff(f[0], f[10]), diff(f[19], f[29])
+
+    early, late = moved(render_punchin)
+    assert early > 3 * late  # front-loaded
+    assert early > moved(render_pushin)[0]  # and faster than the push-in
+
+
+def test_music_fade_in_can_be_off():
+    bed = [(3, Bed(Path("m.mp3"), 0.0, -20))]
+    assert "afade=t=in" in ";".join(_audio_graph([Path("a"), Path("b")], [1.0, 1.0], bed, 2.0, 0.0, 1.0))
+    off = ";".join(_audio_graph([Path("a"), Path("b")], [1.0, 1.0], bed, 2.0, 0.0, 0))
+    assert "afade=t=in" not in off and "afade=t=out" in off

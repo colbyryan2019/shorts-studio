@@ -48,10 +48,12 @@ class SeriesConfig(BaseModel):
     max_genvideo_shots: int = Field(ge=0)
     end_card_format: str = ""
     default_motion: Literal["pushin", "rock", "drift"]
+    hook_motion: Literal["", "punchin", "pushin", "rock", "drift"] = ""  # shot 1's motion; empty = as scripted
     caption_style: str = ""
     caption_font: str = ""  # a file in assets/fonts; empty = the first font found there
     music_volume_db: float = -20
     sfx_volume_db: float = -26  # ambience bed from sfx/; no files = no bed
+    music_fade_in_seconds: float = Field(default=1.0, ge=0, le=5)  # music and ambience; 0 = full level at once
     line_pause_seconds: float = Field(default=0.3, ge=0, le=3)  # silence after each line
     voice_settings: VoiceSettings | None = None
     sources_required: bool = True

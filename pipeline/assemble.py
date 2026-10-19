@@ -27,7 +27,6 @@ from .series import Series
 from .voice import audio_seconds
 
 AUDIO_SUFFIXES = {".mp3", ".m4a", ".wav"}
-FADE_IN_SECONDS = 1.0
 MUSIC_FADE_SECONDS = 2.0
 NARRATION_LUFS = -16.0  # standard loudness for spoken social video; beds are set relative to it
 PEAK_LIMIT = 0.89  # about -1 dBFS, so the mix never clips
@@ -136,6 +135,7 @@ def _fingerprint(clips: list[ClipPlan], script: Script, timings: dict, words: di
         "beds": [[b.path.name, b.offset, b.gain_db] for b in beds],
         "narration_gain": narration_gain,
         "caption_style": series.config.caption_style,
+        "fade_in": series.config.music_fade_in_seconds,
         "v": FINAL_VERSION,
     }).encode())
     for p in [*audio, *(b.path for b in beds), *([font] if font else [])]:
@@ -192,7 +192,8 @@ def assemble(series: Series, ep: Episode, script: Script, clips: list[ClipPlan],
     args += ["-f", "concat", "-safe", "0", "-i", str(caption_list), "-i", str(end_card.png)]
 
     graph = (_video_graph(caption_input, end_card)
-             + _audio_graph(audio, shot_seconds, list(zip(bed_inputs, beds)), total, narration_gain))
+             + _audio_graph(audio, shot_seconds, list(zip(bed_inputs, beds)), total, narration_gain,
+                          cfg.music_fade_in_seconds))
     tmp = final.with_name("final.tmp.mp4")
     args += [
         "-filter_complex", ";".join(graph), "-map", "[v]", "-map", "[a]",
@@ -252,7 +253,7 @@ def _video_graph(caption_input: int, end_card: Overlay) -> list[str]:
 
 
 def _audio_graph(audio: list[Path], shot_seconds: list[float], beds: list[tuple[int, Bed]],
-                 total: float, narration_gain: float = 0.0) -> list[str]:
+                 total: float, narration_gain: float = 0.0, fade_in: float = 1.0) -> list[str]:
     graph = []
     for i, secs in enumerate(shot_seconds):
         # Pad (or trim) each line to exactly its shot's length, so line i starts with shot i.
@@ -265,9 +266,10 @@ def _audio_graph(audio: list[Path], shot_seconds: list[float], beds: list[tuple[
         graph.append(f"[narr]{limiter}[a]")
         return graph
     fade_start = max(total - MUSIC_FADE_SECONDS, 0)
+    fade = f"afade=t=in:st=0:d={fade_in}," if fade_in > 0 else ""  # 0: full level from the first frame
     for k, (index, bed) in enumerate(beds):
         graph.append(f"[{index}:a]aresample=44100,aformat=channel_layouts=stereo,atrim=0:{total:.3f},"
-                     f"asetpts=PTS-STARTPTS,volume={bed.gain_db}dB,afade=t=in:st=0:d={FADE_IN_SECONDS},"
+                     f"asetpts=PTS-STARTPTS,volume={bed.gain_db}dB,{fade}"
                      f"afade=t=out:st={fade_start:.3f}:d={MUSIC_FADE_SECONDS}[bed{k}]")
     labels = "[narr]" + "".join(f"[bed{k}]" for k in range(len(beds)))
     graph.append(f"{labels}amix=inputs={1 + len(beds)}:duration=first:normalize=0,{limiter}[a]")

@@ -22,6 +22,7 @@ from .config import load_settings
 from .cost import log_cost
 from .episode import Episode
 from .errors import PipelineError
+from .reuse import find_moved
 from .schema import Script, Shot
 from .series import Series
 
@@ -41,6 +42,7 @@ class LinePlan:
     next_text: str
     fingerprint: str
     reason: str  # why it will be read; "" means the existing audio is reused
+    copy_from: str = ""  # an identical reading under another shot number, copied instead of read
 
 
 Word = tuple[str, float, float]  # (word, start, end) in seconds from the start of the line
@@ -121,17 +123,21 @@ def plan_voice(ep: Episode, script: Script, voice_id: str, model: str, redo: set
             reason = "no word timings yet"
         else:
             reason = ""
+        moved = (find_moved(manifest, audio_dir(ep), path.name, fp, lambda e: "words" in e)
+                 if reason and shot.n not in redo else "")
+        if moved:
+            reason = f"same as {moved} (copied, free)"
         plans.append(LinePlan(
             shot, path,
             previous_text=shots[i - 1].narration if i > 0 else "",
             next_text=shots[i + 1].narration if i + 1 < len(shots) else "",
-            fingerprint=fp, reason=reason,
+            fingerprint=fp, reason=reason, copy_from=moved,
         ))
     return plans
 
 
 def describe_voice_plan(plans: list[LinePlan]) -> str:
-    todo = [p for p in plans if p.reason]
+    todo = [p for p in plans if p.reason and not p.copy_from]
     lines = [f"Narration: {len(todo)} lines to read, {len(plans) - len(todo)} reused"]
     for p in plans:
         lines.append(f"  {p.path.name}  {p.reason or 'reuse'}  \"{p.shot.narration}\"")
@@ -149,7 +155,7 @@ def make_voice(client: VoiceClient, ep: Episode, plans: list[LinePlan],
     out.mkdir(parents=True, exist_ok=True)
     manifest = _read_manifest(ep)
     for p in plans:
-        if not p.reason:
+        if not p.reason or p.copy_from:
             continue
         speech = client.speak(p.shot.narration, p.previous_text, p.next_text)
         if not speech.audio:

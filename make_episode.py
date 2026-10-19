@@ -19,15 +19,18 @@ from pipeline.config import PROJECT_ROOT, load_settings
 from pipeline.episode import Episode
 from pipeline.errors import PipelineError
 from pipeline.imagegen import FAKE_MODEL, ImageClient, make_budget, make_image_client
-from pipeline.images import describe_plan, make_images, plan_images
+from pipeline.images import MANIFEST as IMAGES_MANIFEST
+from pipeline.images import describe_plan, images_dir, make_images, plan_images
 from pipeline.llm import LLMClient, make_client
 from pipeline.motion import make_clips, plan_clips
+from pipeline.reuse import apply_moves
 from pipeline.review import write_review
 from pipeline.schema import Script, validate_script
 from pipeline.script import format_summary, planned_calls, write_script
 from pipeline.series import Series, load_series
 from pipeline.voice import FAKE_MODEL as FAKE_VOICE_MODEL
-from pipeline.voice import (VoiceClient, describe_voice_plan, make_voice, make_voice_client, narration_timings,
+from pipeline.voice import MANIFEST as AUDIO_MANIFEST
+from pipeline.voice import (VoiceClient, audio_dir, describe_voice_plan, make_voice, make_voice_client, narration_timings,
                             plan_voice, voice_setup_problem, word_timings)
 
 
@@ -213,6 +216,8 @@ def run(argv: list[str] | None = None, root: Path = PROJECT_ROOT,
         print("\n(--dry-run: nothing drawn, read or rendered.)")
         return 0
 
+    if moved := apply_moves(images_dir(ep), IMAGES_MANIFEST, plans):
+        print(f"\nReused {moved} image(s) that moved to a new shot number.")
     if any(p.reason for p in plans):
         images = image_client or make_image_client(args.fake_images, root, series.config.image_quality)
         print(f"\nDrawing with {images.model}...")
@@ -222,6 +227,8 @@ def run(argv: list[str] | None = None, root: Path = PROJECT_ROOT,
           "shot's image_prompt redraws just that shot next run.")
 
     if voice_ready:
+        if moved := apply_moves(audio_dir(ep), AUDIO_MANIFEST, voice_plans):
+            print(f"\nReused {moved} narration line(s) that moved to a new shot number.")
         if any(p.reason for p in voice_plans):
             voice = voice_client or make_voice_client(args.fake_voice, series, root)
             print(f"\nReading narration with {voice.model}...")
@@ -238,7 +245,7 @@ def run(argv: list[str] | None = None, root: Path = PROJECT_ROOT,
 
     timings = narration_timings(ep, result.script, cfg.line_pause_seconds)
     shot_seconds = {n: shot for n, (_, shot) in timings.items()}
-    clips = plan_clips(ep, result.script, shot_seconds, redo, series.config.default_motion)
+    clips = plan_clips(ep, result.script, shot_seconds, redo, cfg.default_motion, cfg.hook_motion)
     if any(c.reason for c in clips):
         print("\nRendering clips...")
         make_clips(ep, clips)

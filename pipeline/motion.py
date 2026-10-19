@@ -1,6 +1,7 @@
 """Step 4: turn each still into a clip of its shot's duration (1080x1920, 30 fps) with cheap ffmpeg motion.
 
 `pushin`, `rock` and `drift` are built; `genvideo` shots use the series' default_motion until it is built.
+`punchin` is a fast, front-loaded zoom for the hook: shot 1 uses it when the series sets hook_motion.
 Clips are recorded in clips/manifest.json with a fingerprint (image, duration, motion), so a
 re-run only re-renders clips whose image or narration length changed, plus any --redo N.
 """
@@ -21,6 +22,7 @@ MANIFEST = "manifest.json"
 BUILT_MOTIONS = {"pushin", "rock", "drift"}
 MOTION_VERSION = 1  # bump when a motion's look changes, so existing clips are re-rendered
 ZOOM = 0.10  # push-in goes from 100% to 110%
+PUNCH_ZOOM = 0.20  # punch-in goes from 100% to 120%, most of it in the first moments
 ROCK_SCALE = 1.15  # oversize so the tilted frame never shows its corners
 ROCK_DEGREES = 2.0  # tilt either way
 ROCK_PERIOD = 3.0  # seconds per full rock
@@ -37,6 +39,7 @@ class ClipPlan:
     motion: str  # the motion actually rendered
     fingerprint: str
     reason: str  # why it will be rendered; "" means the existing clip is reused
+    note: str = ""  # why the rendered motion differs from the script's, if it does
 
 
 def clips_dir(ep: Episode) -> Path:
@@ -53,14 +56,18 @@ def _read_manifest(ep: Episode) -> dict:
 
 
 def plan_clips(ep: Episode, script: Script, durations: dict[int, float], redo: set[int],
-               default_motion: str) -> list[ClipPlan]:
+               default_motion: str, hook_motion: str = "") -> list[ClipPlan]:
     manifest = _read_manifest(ep)
     plans = []
     for shot in script.shots:
         image = ep.path / "images" / f"{shot.n:02d}.png"
         if not image.is_file():
             raise PipelineError(f"Shot {shot.n} has no image yet ({image}). Draw the images first.")
-        motion = rendered_motion(shot.motion, default_motion)
+        if shot.n == 1 and hook_motion:
+            motion, note = hook_motion, "hook_motion"
+        else:
+            motion = rendered_motion(shot.motion, default_motion)
+            note = "" if motion == shot.motion else f"{shot.motion} not built yet"
         seconds = frames(durations[shot.n]) / FPS
         h = hashlib.sha256(hashlib.sha256(image.read_bytes()).digest())
         h.update(json.dumps({"frames": frames(seconds), "motion": motion, "v": MOTION_VERSION}).encode())
@@ -74,7 +81,7 @@ def plan_clips(ep: Episode, script: Script, durations: dict[int, float], redo: s
             reason = "changed"
         else:
             reason = ""
-        plans.append(ClipPlan(shot, image, path, seconds, motion, fp, reason))
+        plans.append(ClipPlan(shot, image, path, seconds, motion, fp, reason, note))
     return plans
 
 
@@ -88,16 +95,23 @@ def make_clips(ep: Episode, plans: list[ClipPlan]) -> None:
         RENDERERS[p.motion](p.image, p.path, frames(p.seconds), p.shot.n)
         manifest[p.path.name] = {"fingerprint": p.fingerprint, "motion": p.motion, "seconds": p.seconds}
         (out / MANIFEST).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-        note = "" if p.motion == p.shot.motion else f" ({p.shot.motion} not built yet)"
-        print(f"  {p.path.name}  {p.motion}{note}  {p.seconds:.2f}s")
+        print(f"  {p.path.name}  {p.motion}{f' ({p.note})' if p.note else ''}  {p.seconds:.2f}s")
 
 
 def render_pushin(image: Path, out: Path, n_frames: int, shot_n: int = 1) -> None:
+    _render_zoom(image, out, n_frames, f"1+{ZOOM / max(n_frames - 1, 1):.8f}*on")
+
+
+def render_punchin(image: Path, out: Path, n_frames: int, shot_n: int = 1) -> None:
+    """A hook: a fast zoom that eases out (cubic), so most of the movement lands in the first moments."""
+    _render_zoom(image, out, n_frames, f"1+{PUNCH_ZOOM}*(1-pow(1-on/{max(n_frames - 1, 1)},3))")
+
+
+def _render_zoom(image: Path, out: Path, n_frames: int, zoom: str) -> None:
     # Upscaling first keeps zoompan's whole-pixel steps small, so the zoom doesn't shimmer.
-    step = ZOOM / max(n_frames - 1, 1)
     vf = (
         f"scale={WIDTH * 2}:{HEIGHT * 2},"
-        f"zoompan=z='1+{step:.8f}*on':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
+        f"zoompan=z='{zoom}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
         f":d={n_frames}:s={WIDTH}x{HEIGHT}:fps={FPS},format=yuv420p"
     )
     run_ffmpeg(
@@ -146,4 +160,4 @@ def _render_looped(image: Path, out: Path, n_frames: int, vf: str) -> None:
     )
 
 
-RENDERERS = {"pushin": render_pushin, "rock": render_rock, "drift": render_drift}
+RENDERERS = {"pushin": render_pushin, "punchin": render_punchin, "rock": render_rock, "drift": render_drift}

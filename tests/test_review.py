@@ -194,3 +194,36 @@ def test_new_series_title_and_checks(project):
         new_series.run(["--name", "test-series"], root=project, templates=templates)
     with pytest.raises(SystemExit):
         new_series.parse_args(["--name", "Bad Name"])
+
+
+# --- shots that moved to a new number ----------------------------------------------
+
+def test_inserted_shot_reuses_moved_images_and_lines(project, episode, capsys, monkeypatch, good_script):
+    monkeypatch.setattr("pipeline.voice.FAKE_WORDS_PER_SECOND", 20)
+    _, ep, _ = episode
+    ep.approve()
+    base = ["--series", "test-series", "--episode", "1", "--fake-images", "--fake-voice"]
+    assert make_episode.run(base, root=project) == 0
+    old_image = (ep.path / "images" / "01.png").read_bytes()
+    capsys.readouterr()
+
+    # A new hook goes in front (and the last shot goes, to stay in the limits): every shot moves down one.
+    new_hook = {"n": 1, "narration": "You have three days to live.", "image_prompt": "A face, close up",
+                "motion": "pushin", "refs": []}
+    shots = [new_hook] + good_script["shots"][:-1]
+    for n, shot in enumerate(shots, start=1):
+        shot["n"] = n
+    ep.save_script({**good_script, "shots": shots})
+    ep.approve()
+    assert make_episode.run(base, root=project) == 0
+    out = capsys.readouterr().out
+    assert "Images: 1 to draw, 9 reused" in out and "Narration: 1 lines to read, 9 reused" in out
+    assert "02.png  same as 01.png (copied, free)" in out
+    assert "Reused 9 image(s)" in out and "Reused 9 narration line(s)" in out
+    assert (ep.path / "images" / "02.png").read_bytes() == old_image  # the old shot 1, not a redraw
+    assert (ep.path / "images" / "01.png").read_bytes() != old_image
+
+    # Everything is in place now: a re-run reuses all of it.
+    assert make_episode.run(base, root=project) == 0
+    out = capsys.readouterr().out
+    assert "Images: 0 to draw, 10 reused" in out and "Narration: 0 lines to read, 10 reused" in out

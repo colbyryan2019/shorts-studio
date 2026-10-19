@@ -106,6 +106,7 @@ words: [118, 135]            # narration length range (about 65 s)
 shots: [12, 16]
 end_card_format: "DAY {day} · WATER: {water}"
 default_motion: rock         # pushin | rock | drift (also the fallback for failed video shots)
+hook_motion: punchin         # optional: shot 1's motion whatever the script says (punchin | pushin | rock | drift)
 visual_mode: mixed           # stills | video | mixed
 video_model: ""              # optional: overrides VIDEO_MODEL in .env for this series
 max_video_shots: 3           # mixed mode: at most this many shots are generated video
@@ -115,6 +116,7 @@ max_video_cost_per_episode_usd: 3.00   # video spend only; images and voice are 
 caption_style: highlight_word   # highlight_word | bold_white_outline | plain_white
 music_volume_db: -20         # dB under the narration (more negative = quieter)
 sfx_volume_db: -26           # optional: ambience bed, dB under the narration; no sfx/ files = no bed
+music_fade_in_seconds: 0     # optional: fade-in of music and ambience (default 1); 0 = full level on the first frame
 line_pause_seconds: 0.3      # optional: silence after each line (pacing)
 voice_settings:              # optional: passed to ElevenLabs (tone and pace of the narrator)
   stability: 0.5
@@ -138,6 +140,7 @@ ref_candidates: 3            # optional: candidates per ref in make_refs.py
 - Visual style is set per series (`style_line.txt`); keep it simple and readable on a phone. The narration carries the drama.
 - The main character is an everyperson the viewer can imagine being: simplified, generic features.
 - Short, fast lines. Every episode runs at least 60 seconds; aim for about 65.
+- Open on a hook: shot 1 shows the crisis as it happens, close up and mid-action, never a calm wide view or the aftermath.
 - End on a cliffhanger. Never a vote, a question to the audience, or "comment below."
 - When a series teaches facts, every factual claim comes from that series' sources and is listed in `claims`.
 - Every story shot is a literal, physically possible scene: one sun in the sky, no symbolic counters or icons standing in for numbers or time. Simple and uncluttered applies to video shots too.
@@ -192,6 +195,7 @@ ElevenLabs text-to-speech with the series `voice_id`, `VOICE_MODEL` and optional
 
 Turn each still into a clip of the shot's duration at 1080x1920, 30 fps:
 - `pushin`: slow zoom 100% to 110% (zoompan).
+- `punchin`: the hook: a fast zoom 100% to 120% that eases out, so most of it lands in the first moments. Used for shot 1 when the series sets `hook_motion`; not a script motion.
 - `rock`: scale to about 115%, rotate with a small sine wave (about ±2°, period about 3 s) plus a small vertical bob, then crop back to 1080x1920 so no corners show. Each shot starts at a different point in the swell.
 - `drift`: slow, steady horizontal pan across a frame about 112% wide; alternate shots pan opposite ways.
 - `rock` and `drift` are rendered at 2x and scaled down, so slow movement doesn't step in whole pixels.
@@ -227,7 +231,7 @@ Runs after narration, so each shot's real duration is known. Only for an approve
 - Concatenate the shot clips with hard cuts.
 - Narration track: line audio placed at each shot's start.
 - Levels: the narration is measured and brought to -16 LUFS; music and ambience are measured too and set `music_volume_db` / `sfx_volume_db` under it, whatever their own mastering; a limiter keeps peaks under -1 dBFS.
-- Music: a track from the series `music/` (or `assets/music/`), chosen at random (or with `--music NAME`, saved in the episode's `music.txt`) but the same one on every run of an episode, starting at a random point in the track (also fixed per episode) so long tracks give varied beds and skip quiet intros. Faded in over 1 s, looped if short, faded out over the last 2 s. With no tracks the video has narration only, with a note.
+- Music: a track from the series `music/` (or `assets/music/`), chosen at random (or with `--music NAME`, saved in the episode's `music.txt`) but the same one on every run of an episode, starting at a random point in the track (also fixed per episode) so long tracks give varied beds and skip quiet intros. Faded in over `music_fade_in_seconds` (default 1 s; 0 starts at full level so the hook lands hard), looped if short, faded out over the last 2 s. With no tracks the video has narration only, with a note.
 - Sound effects: an ambience loop (waves, wind) from the series `sfx/` (or `assets/sfx/`), picked and offset the same way, at `sfx_volume_db` under everything, with the same fades. No files, no bed.
 - Captions: drawn with Pillow as transparent PNGs and overlaid by ffmpeg (so any ffmpeg build works, no libass needed), in the font from `assets/fonts/` (first .ttf/.otf; Pillow's built-in font if none). `highlight_word` shows a short phrase of a few words with the word being spoken in a highlight colour, timed from ElevenLabs' word timings (no transcription); lines without word timings (e.g. `--fake-voice`) fall back to `bold_white_outline`. `bold_white_outline` and `plain_white` show one short phrase at a time, timed from the line durations.
 - End card: `end_card` text in plain white capitals over the last shot for its final 2 s.

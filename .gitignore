@@ -10,3 +10,4 @@ assets/fonts/*
 !assets/fonts/.gitkeep
 assets/sfx/*
 !assets/sfx/.gitkeep
+assets/branding/*

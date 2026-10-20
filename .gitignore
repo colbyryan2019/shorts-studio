@@ -1,7 +1,7 @@
 .env
 __pycache__/
 .venv/
-/series/
+/series
 .DS_Store
 .pytest_cache/
 assets/music/*

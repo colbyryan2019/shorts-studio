@@ -87,10 +87,11 @@ def write_review(series: Series, ep: Episode, script: Script, *, mode: str, stat
     cfg = series.config
 
     facts = [f"{script.narration_words} words (target {cfg.words[0]}-{cfg.words[1]})", f"{len(script.shots)} shots"]
+    target = f"target {cfg.seconds[0]}-{cfg.seconds[1]}"
     if final.get("seconds"):
-        facts.insert(0, f"{final['seconds']:.1f} s (target 60-70, aim for 65)")
+        facts.insert(0, f"{final['seconds']:.1f} s ({target})")
     elif shot_seconds:
-        facts.insert(0, f"about {sum(shot_seconds.values()):.1f} s of narration (target 60-70, aim for 65)")
+        facts.insert(0, f"about {sum(shot_seconds.values()):.1f} s of narration ({target})")
     lines = [
         f"# {script.title}",
         "",

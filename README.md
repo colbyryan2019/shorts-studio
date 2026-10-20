@@ -136,9 +136,10 @@ python make_episode.py --series stranded-at-sea --episode 1 --fake-images --fake
 - **Ambience:** optional looping beds (waves, wind) in `assets/sfx/` (or `series/<name>/sfx/`), picked and placed the same way, at `sfx_volume_db` (default -26).
 - **Captions:** put `.ttf` / `.otf` fonts in `assets/fonts/`; `caption_font` in `series.yaml` picks one by file name (default: the first). Style is `caption_style`: `highlight_word` (a few words at a time, the spoken word in yellow), `bold_white_outline` or `plain_white`.
 - Music, ambience and fonts are git-ignored (their licenses may not allow redistribution), so keep your own copies.
+- **Follow line:** `end_card_cta: "Follow for part {next}"` in `series.yaml` shows a smaller yellow line under the end card for its last 2 s (`{next}` is the next episode number, `{episode}` this one). It's on screen only; the narration still ends on the cliffhanger.
 - **The hook:** `hook_motion: punchin` in `series.yaml` gives shot 1 a fast zoom that lands in the first moments, whatever the script says (or `pushin`, `rock`, `drift`; leave it out to keep the script's motion). `music_fade_in_seconds: 0` starts the music and ambience at full level on the first frame instead of fading in over 1 s.
 - Each shot moves as its `motion` says: `pushin` (slow zoom), `rock` (gentle tilt and bob, like a boat on a swell) or `drift` (slow sideways pan). `genvideo` shots use the series `default_motion` until that milestone is built.
-- Re-running re-renders only clips whose image or narration changed, and skips the final build if nothing changed. The target length is 60–70 s (aim for 65); you'll get a note outside that.
+- Re-running re-renders only clips whose image or narration changed, and skips the final build if nothing changed. The target length is `seconds` in `series.yaml` (default 60–70 s); you'll get a note outside that. To lengthen a series later, raise `seconds` and `words` together.
 
 ## Review sheet and cost
 

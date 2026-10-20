@@ -7,9 +7,9 @@ import pytest
 from PIL import Image, ImageChops, ImageStat
 
 import make_episode
-from pipeline.assemble import (NARRATION_LUFS, Bed, _audio_graph, bed_gain, choose_music, length_warning, pick_music,
-                               pick_sfx, start_offset)
-from pipeline.captions import (caption_style, find_font, phrase_times, render_text, render_words, split_phrases,
+from pipeline.assemble import (NARRATION_LUFS, Bed, _audio_graph, bed_gain, choose_music, end_card_cta, length_warning,
+                               pick_music, pick_sfx, start_offset)
+from pipeline.captions import (CTA_STYLE, build_overlays, caption_style, find_font, phrase_times, render_text, render_words, split_phrases,
                                word_segments)
 from pipeline.episode import Episode
 from pipeline.errors import PipelineError
@@ -129,8 +129,9 @@ def test_music_prefers_series_folder_and_is_stable(project, series_dir):
 
 
 def test_length_warning():
-    assert length_warning(65) is None
-    assert "under" in length_warning(49) and "over" in length_warning(75)
+    assert length_warning(65, (60, 70)) is None
+    assert "under" in length_warning(49, (60, 70)) and "over" in length_warning(75, (60, 70))
+    assert length_warning(45, (40, 70)) is None  # a series with shorter episodes
 
 
 def test_genvideo_uses_the_default_motion_until_built():
@@ -302,3 +303,14 @@ def test_music_fade_in_can_be_off():
     assert "afade=t=in" in ";".join(_audio_graph([Path("a"), Path("b")], [1.0, 1.0], bed, 2.0, 0.0, 1.0))
     off = ";".join(_audio_graph([Path("a"), Path("b")], [1.0, 1.0], bed, 2.0, 0.0, 0))
     assert "afade=t=in" not in off and "afade=t=out" in off
+
+
+def test_end_card_follow_line(tmp_path):
+    assert end_card_cta("Follow for part {next}", 1) == "Follow for part 2"
+    assert end_card_cta("Episode {episode}", 7) == "Episode 7"
+    timings = [("Your boat is gone.", 1.0, 3.0, None)]
+    _, plain = build_overlays(timings, "DAY 1", caption_style(""), None, tmp_path / "a")
+    _, card = build_overlays(timings, "DAY 1", caption_style(""), None, tmp_path / "b", "Follow for part 2")
+    r, g, b = CTA_STYLE.fill
+    yellow = lambda path: sum(n for n, p in Image.open(path).getcolors(1 << 24) if p[:3] == (r, g, b) and p[3] == 255)
+    assert yellow(plain.png) == 0 and yellow(card.png) > 500

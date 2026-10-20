@@ -30,7 +30,6 @@ AUDIO_SUFFIXES = {".mp3", ".m4a", ".wav"}
 MUSIC_FADE_SECONDS = 2.0
 NARRATION_LUFS = -16.0  # standard loudness for spoken social video; beds are set relative to it
 PEAK_LIMIT = 0.89  # about -1 dBFS, so the mix never clips
-TARGET_SECONDS = (60, 70)  # every episode runs at least a minute; aim for 65 s
 FINAL_VERSION = 3  # bump when assembly's output changes, so finals are rebuilt
 
 
@@ -132,6 +131,7 @@ def _fingerprint(clips: list[ClipPlan], script: Script, timings: dict, words: di
         "clips": [c.fingerprint for c in clips],
         "lines": [[s.narration, *timings[s.n], words.get(s.n)] for s in script.shots],
         "end_card": script.end_card,
+        "cta": series.config.end_card_cta,
         "beds": [[b.path.name, b.offset, b.gain_db] for b in beds],
         "narration_gain": narration_gain,
         "caption_style": series.config.caption_style,
@@ -174,7 +174,7 @@ def assemble(series: Series, ep: Episode, script: Script, clips: list[ClipPlan],
 
     captions, end_card = build_overlays(
         [(s.narration, timings[s.n][0], secs, words.get(s.n)) for s, secs in zip(script.shots, shot_seconds)],
-        script.end_card, style, font, ep.path / "captions",
+        script.end_card, style, font, ep.path / "captions", end_card_cta(cfg.end_card_cta, ep.number),
     )
     concat_list = ep.path / "clips" / "concat.txt"
     concat_list.write_text("".join(f"file '{c.path.name}'\n" for c in clips), encoding="utf-8")
@@ -276,8 +276,12 @@ def _audio_graph(audio: list[Path], shot_seconds: list[float], beds: list[tuple[
     return graph
 
 
-def length_warning(seconds: float) -> str | None:
-    low, high = TARGET_SECONDS
+def end_card_cta(template: str, episode: int) -> str:
+    return template.replace("{episode}", str(episode)).replace("{next}", str(episode + 1))
+
+
+def length_warning(seconds: float, target: tuple[int, int]) -> str | None:
+    low, high = target
     if seconds < low:
         return f"The episode is {seconds:.1f}s, under the {low}s target. Lengthen the narration."
     if seconds > high:

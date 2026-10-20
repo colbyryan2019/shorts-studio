@@ -51,7 +51,8 @@ def build_system(series: Series) -> str:
         + json.dumps(SCHEMA_EXAMPLE, indent=2, ensure_ascii=False)
         + "\n\nRules for the JSON:\n"
         f"- {cfg.shots[0]}-{cfg.shots[1]} shots, numbered from 1 in order; one narration line per shot.\n"
-        f"- Total narration across all shots: {cfg.words[0]}-{cfg.words[1]} words.\n"
+        f"- Total narration across all shots: {cfg.words[0]}-{cfg.words[1]} words, "
+        f"which reads in about {cfg.seconds[0]}-{cfg.seconds[1]} seconds (this series' target length).\n"
         "- `motion` is one of: pushin, rock, drift, genvideo. "
         f"Use genvideo for at most {cfg.max_genvideo_shots} shots, only where real movement matters most.\n"
         f"- `refs` lists reference images to keep characters and objects consistent. Allowed names: {refs}.{ref_rules}\n"

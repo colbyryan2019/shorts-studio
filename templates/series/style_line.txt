@@ -1,1 +1,1 @@
-TODO: One paragraph describing the image style, sent with every image prompt. E.g. "Simplified stylized 3D animated look: soft rounded forms, clean muted colors, uncluttered backgrounds. Serious mood. Vertical 9:16 frame. No text in the image."
+TODO: One paragraph describing the image style, sent with every image prompt. E.g. "Simplified stylized 3D animated look (or flat 2D illustration): soft rounded forms, clean muted colors, uncluttered backgrounds. Serious mood. Vertical 9:16 frame. No text in the image."

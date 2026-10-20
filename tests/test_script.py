@@ -106,6 +106,7 @@ def test_prompt_contains_all_inputs(project, series_dir, good_script):
     assert "Never drink seawater" in system        # sources
     assert "dinghy" in system                      # allowed refs
     assert "90-110 words" in system                # limits
+    assert "60-70 seconds" in system               # default target length
     assert "Rain finally comes." in task           # outline
     assert "Earlier Episode" in task               # recent episodes
 

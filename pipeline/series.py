@@ -45,8 +45,10 @@ class SeriesConfig(BaseModel):
     voice_id: str = ""
     words: tuple[int, int]
     shots: tuple[int, int]
+    seconds: tuple[int, int] = (60, 70)  # target episode length; the review and final build flag anything outside
     max_genvideo_shots: int = Field(ge=0)
     end_card_format: str = ""
+    end_card_cta: str = ""  # follow line under the end card, e.g. "Follow for part {next}"; {episode} works too
     default_motion: Literal["pushin", "rock", "drift"]
     hook_motion: Literal["", "punchin", "pushin", "rock", "drift"] = ""  # shot 1's motion; empty = as scripted
     caption_style: str = ""
@@ -66,7 +68,7 @@ class SeriesConfig(BaseModel):
 
     @model_validator(mode="after")
     def _check_ranges(self) -> "SeriesConfig":
-        for name in ("words", "shots"):
+        for name in ("words", "shots", "seconds"):
             low, high = getattr(self, name)
             if low < 1 or high < low:
                 raise ValueError(f"{name} must be [min, max] with 1 <= min <= max, got [{low}, {high}]")

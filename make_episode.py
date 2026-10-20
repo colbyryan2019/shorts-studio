@@ -259,7 +259,7 @@ def run(argv: list[str] | None = None, root: Path = PROJECT_ROOT,
         print(f"  Note: no ambience in {series.path / 'sfx'} or {root / 'assets' / 'sfx'}; music and narration only.")
     if built.font is None:
         print(f"  Note: no font in {root / 'assets' / 'fonts'}; captions use Pillow's built-in font.")
-    if warning := length_warning(built.seconds):
+    if warning := length_warning(built.seconds, series.config.seconds):
         print(f"  {warning}")
     print(f"\nDone: {built.final} ({built.seconds:.1f}s"
           + (f", music: {built.music.name}" if built.music else "") + ")")

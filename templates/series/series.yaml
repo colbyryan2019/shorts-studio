@@ -1,10 +1,12 @@
 # Settings for this series. Unknown keys are rejected, so a typo shows up as an error.
 title: "__TITLE__"
 voice_id: ""                     # ElevenLabs narrator voice ID (Voices -> the voice -> ID)
-words: [118, 135]                # narration length range in words (about 65 s)
+words: [118, 135]                # narration length range in words (about 2 words per second)
+seconds: [60, 70]                # target episode length; raise or lower together with words
 shots: [12, 16]
 max_genvideo_shots: 2
 end_card_format: ""              # e.g. "DAY {day} · WATER: {water}"; the script fills it in
+end_card_cta: "Follow for part {next}"   # on-screen line under the end card ({next} = next episode); "" = none
 default_motion: pushin           # pushin | rock | drift
 hook_motion: punchin             # shot 1 (the hook): punchin (fast zoom) | pushin | rock | drift | "" (as scripted)
 caption_style: highlight_word    # highlight_word | bold_white_outline | plain_white

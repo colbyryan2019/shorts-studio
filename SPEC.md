@@ -103,8 +103,10 @@ A model missing from `prices.yaml` can't be used for video (the cost guard has n
 title: Stranded at Sea
 voice_id: ""                 # ElevenLabs voice for this series' narrator
 words: [118, 135]            # narration length range (about 65 s)
+seconds: [60, 70]            # optional: target episode length (default 60-70); the review and final build flag anything outside
 shots: [12, 16]
 end_card_format: "DAY {day} · WATER: {water}"
+end_card_cta: "Follow for part {next}"   # optional: on-screen follow line under the end card; {episode}, {next}
 default_motion: rock         # pushin | rock | drift (also the fallback for failed video shots)
 hook_motion: punchin         # optional: shot 1's motion whatever the script says (punchin | pushin | rock | drift)
 visual_mode: mixed           # stills | video | mixed
@@ -138,13 +140,13 @@ ref_candidates: 3            # optional: candidates per ref in make_refs.py
 
 - Second-person narration ("you"), serious and dramatic. No jokes, no comic relief, no mascot.
 - Visual style is set per series (`style_line.txt`); keep it simple and readable on a phone. The narration carries the drama.
-- The main character is an everyperson the viewer can imagine being: simplified, generic features.
-- Short, fast lines. Every episode runs at least 60 seconds; aim for about 65.
+- The main character is an everyperson the viewer can imagine being: simplified, generic features. Recurring companions share the simplified look.
+- Short, fast lines. Every episode runs within its series' `seconds` target (default 60–70, aim for about 65).
 - Open on a hook: shot 1 shows the crisis as it happens, close up and mid-action, never a calm wide view or the aftermath.
-- End on a cliffhanger. Never a vote, a question to the audience, or "comment below."
+- End on a cliffhanger. The narration never asks anything of the viewer (no vote, question, "comment below" or "follow"); an optional follow line is shown on the end card by the pipeline.
 - When a series teaches facts, every factual claim comes from that series' sources and is listed in `claims`.
 - Every story shot is a literal, physically possible scene: one sun in the sky, no symbolic counters or icons standing in for numbers or time. Simple and uncluttered applies to video shots too.
-- Educational lines may cut away to a short 3D explainer shot of the fact itself, in the series style (a see-through body with the kidneys glowing, salt crystals forming in seawater): one idea per shot, plain dark background, no text, labels or arrows, no main character.
+- Educational lines may cut away to a short explainer shot of the fact itself, in the series style (a see-through body with the kidneys glowing, salt crystals forming in seawater): one idea per shot, plain dark background, no text, labels or arrows, no main character.
 
 The series bible can add rules but not override these.
 
@@ -234,7 +236,7 @@ Runs after narration, so each shot's real duration is known. Only for an approve
 - Music: a track from the series `music/` (or `assets/music/`), chosen at random (or with `--music NAME`, saved in the episode's `music.txt`) but the same one on every run of an episode, starting at a random point in the track (also fixed per episode) so long tracks give varied beds and skip quiet intros. Faded in over `music_fade_in_seconds` (default 1 s; 0 starts at full level so the hook lands hard), looped if short, faded out over the last 2 s. With no tracks the video has narration only, with a note.
 - Sound effects: an ambience loop (waves, wind) from the series `sfx/` (or `assets/sfx/`), picked and offset the same way, at `sfx_volume_db` under everything, with the same fades. No files, no bed.
 - Captions: drawn with Pillow as transparent PNGs and overlaid by ffmpeg (so any ffmpeg build works, no libass needed), in the font from `assets/fonts/` (first .ttf/.otf; Pillow's built-in font if none). `highlight_word` shows a short phrase of a few words with the word being spoken in a highlight colour, timed from ElevenLabs' word timings (no transcription); lines without word timings (e.g. `--fake-voice`) fall back to `bold_white_outline`. `bold_white_outline` and `plain_white` show one short phrase at a time, timed from the line durations.
-- End card: `end_card` text in plain white capitals over the last shot for its final 2 s.
+- End card: `end_card` text in plain white capitals over the last shot for its final 2 s, with the series' `end_card_cta` (if set) as a smaller highlighted line under it. The narration itself never asks the viewer for anything.
 - `final.json` fingerprints every input, so an unchanged episode isn't re-encoded.
 - Output `final.mp4`, H.264, AAC, 1080x1920, 30 fps.
 
@@ -267,4 +269,4 @@ Write `review.md`: title, full narration, the claims with their source files, th
 
 ## Acceptance
 
-`python make_episode.py --series stranded-at-sea --episode 1 --outline "..."` produces a 60–70 second vertical video (aim for 65) with word-timed captions, steady narration, every shot in motion, the end card, a review sheet and a cost log. In `stills` mode it costs under about $1 in API spend; in `mixed` mode the video spend stays under `max_video_cost_per_episode_usd` unless `--allow-over-budget` is passed. Creating a second series with `new_series.py` requires no code changes.
+`python make_episode.py --series stranded-at-sea --episode 1 --outline "..."` produces a vertical video within the series' `seconds` target (60–70 s for Stranded at Sea, aim for 65) with word-timed captions, steady narration, every shot in motion, the end card, a review sheet and a cost log. In `stills` mode it costs under about $1 in API spend; in `mixed` mode the video spend stays under `max_video_cost_per_episode_usd` unless `--allow-over-budget` is passed. Creating a second series with `new_series.py` requires no code changes.

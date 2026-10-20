@@ -50,6 +50,8 @@ CAPTION_STYLES = {
 DEFAULT_CAPTION_STYLE = "bold_white_outline"
 END_CARD_STYLE = TextStyle(size=104, fill=(255, 255, 255), stroke=4, stroke_fill=(0, 0, 0),
                            center_y=0.42, upper=True)
+# The follow line (series.yaml end_card_cta), between the end card and the captions.
+CTA_STYLE = TextStyle(size=64, fill=(255, 210, 40), stroke=4, stroke_fill=(0, 0, 0), center_y=0.53, upper=True)
 
 
 @dataclass
@@ -202,7 +204,7 @@ def word_segments(text: str, words: list[tuple[str, float, float]] | None, start
 
 
 def build_overlays(timings: list[tuple[str, float, float, list | None]], end_card: str, style: TextStyle,
-                   font_path: Path | None, out_dir: Path) -> tuple[list[Overlay], Overlay]:
+                   font_path: Path | None, out_dir: Path, cta: str = "") -> tuple[list[Overlay], Overlay]:
     """Caption PNGs (in order, never overlapping) and the end card.
 
     `timings` is (narration, line_seconds, shot_seconds, word timings or None) per shot, in order.
@@ -229,4 +231,9 @@ def build_overlays(timings: list[tuple[str, float, float, list | None]], end_car
         t += shot_seconds
     card = out_dir / "end_card.png"
     render_text(end_card, END_CARD_STYLE, font_path, card)
+    if cta:
+        line = out_dir / "end_card_cta.png"
+        render_text(cta, CTA_STYLE, font_path, line)
+        with Image.open(card) as base, Image.open(line) as top:
+            Image.alpha_composite(base, top).save(card, format="PNG")
     return captions, Overlay(card, round(max(t - END_CARD_SECONDS, 0.0), 3), round(t, 3))

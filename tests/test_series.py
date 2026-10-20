@@ -52,6 +52,7 @@ def test_missing_house_rules(project):
 
 @pytest.mark.parametrize("bad, field", [
     ("words: [110, 90]", "words"),
+    ("seconds: [70, 40]", "seconds"),
     ("default_motion: spin", "default_motion"),
     ("max_genvideo_shots: -1", "max_genvideo_shots"),
     ("wrods: [1, 2]", "wrods"),

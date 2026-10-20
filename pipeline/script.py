@@ -58,6 +58,8 @@ def build_system(series: Series) -> str:
         f"- `refs` lists reference images to keep characters and objects consistent. Allowed names: {refs}.{ref_rules}\n"
         f"- `end_card` follows this format: {cfg.end_card_format or '(free text)'}\n"
         "- `image_prompt` describes only the content of the image; the art style is added separately.\n"
+        "- Optional `pause_after`: seconds of silence after a shot's line (0-3), only for a deliberate held beat. "
+        "Leave it out otherwise, and keep it on shots that already have it unless asked to change it.\n"
         f"- {claims_rule}",
     ]
     if series.sources:

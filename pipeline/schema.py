@@ -21,6 +21,7 @@ class Shot(BaseModel):
     image_prompt: str = Field(min_length=1)
     motion: Motion
     refs: list[str] = []
+    pause_after: float | None = Field(default=None, ge=0, le=3)  # seconds; None = the series line_pause_seconds
 
 
 class Claim(BaseModel):

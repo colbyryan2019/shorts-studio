@@ -71,6 +71,11 @@ def shot_seconds(line_seconds: float, pause: float = PAUSE_AFTER_LINE) -> float:
     return round(max(line_seconds + pause, MIN_SHOT_SECONDS), 3)
 
 
+def _pause(shot: Shot, default: float) -> float:
+    """A shot's own pause_after (a held dramatic beat) wins over the series default."""
+    return default if shot.pause_after is None else shot.pause_after
+
+
 def _fingerprint(text: str, voice_id: str, model: str, settings: dict | None) -> str:
     inputs = {"text": text, "voice": voice_id, "model": model}
     if settings:  # only when set, so lines read before voice_settings existed stay valid
@@ -176,7 +181,7 @@ def make_voice(client: VoiceClient, ep: Episode, plans: list[LinePlan],
         if client.model != FAKE_MODEL:  # billed as characters against the plan's credits, not in dollars
             log_cost(ep, "voice", p.path.name, client.model, len(p.shot.narration), "characters", None)
         print(f"  {p.path.name}  ({p.reason})  {seconds:.2f}s")
-    return [(p.shot.n, shot_seconds(manifest[p.path.name]["line_seconds"], pause)) for p in plans]
+    return [(p.shot.n, shot_seconds(manifest[p.path.name]["line_seconds"], _pause(p.shot, pause))) for p in plans]
 
 
 def narration_timings(ep: Episode, script: Script,
@@ -188,7 +193,7 @@ def narration_timings(ep: Episode, script: Script,
         entry = manifest.get(f"{shot.n:02d}.mp3")
         if not entry or entry.get("text") != shot.narration or not (audio_dir(ep) / f"{shot.n:02d}.mp3").exists():
             raise PipelineError(f"Narration for shot {shot.n} is missing or out of date. Run the voice step first.")
-        timings[shot.n] = (entry["line_seconds"], shot_seconds(entry["line_seconds"], pause))
+        timings[shot.n] = (entry["line_seconds"], shot_seconds(entry["line_seconds"], _pause(shot, pause)))
     return timings
 
 

@@ -145,6 +145,10 @@ def test_manifest_records_durations_for_later_steps(episode):
     assert list(durations) == [s.n for s in script.shots]
     assert durations[1] == shot_seconds(first["line_seconds"])
     assert shot_durations(ep, script, pause=1.0)[1] == shot_seconds(first["line_seconds"], 1.0)
+    script.shots[0].pause_after = 0.8  # a shot's own pause wins over the series default
+    assert shot_durations(ep, script, pause=1.0)[1] == shot_seconds(first["line_seconds"], 0.8)
+    assert shot_durations(ep, script, pause=1.0)[2] == shot_seconds(manifest["02.mp3"]["line_seconds"], 1.0)
+    script.shots[0].pause_after = None
     assert word_timings(ep, script)[1][0][0] == script.shots[0].narration.split()[0]
 
     data = ep.load_script_data()

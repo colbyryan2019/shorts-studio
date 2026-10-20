@@ -63,44 +63,71 @@ def _pick_track(folders: list[Path], seed: str) -> Path | None:
 
 
 MUSIC_CHOICE = "music.txt"  # in the episode folder: a track chosen with --music
+SFX_CHOICE = "sfx.txt"  # in the episode folder: an ambience loop chosen with --sfx
 
 
 def music_folders(series: Series, root: Path) -> list[Path]:
     return [series.path / "music", root / "assets" / "music"]
 
 
-def pick_music(series: Series, root: Path, episode: int) -> Path | None:
-    """The track chosen with --music, else one from the series' music/ (or assets/music/) picked at
-    random, the same one every run of this episode."""
-    choice = series.episodes_dir / f"ep{episode:02d}" / MUSIC_CHOICE
-    if choice.is_file():
-        name = choice.read_text(encoding="utf-8").strip()
-        for folder in music_folders(series, root):
-            if (folder / name).is_file():
-                return folder / name
-        raise PipelineError(f"The music chosen for this episode ({name}) is no longer in "
-                            f"{' or '.join(str(f) for f in music_folders(series, root))}. Choose again with --music.")
-    return _pick_track(music_folders(series, root), f"{series.name}-{episode}")
+def sfx_folders(series: Series, root: Path) -> list[Path]:
+    return [series.path / "sfx", root / "assets" / "sfx"]
 
 
-def choose_music(series: Series, root: Path, episode: int, query: str) -> Path:
-    """Save the one track whose file name contains `query` (any case) as this episode's music."""
-    tracks = sorted({f for folder in music_folders(series, root) if folder.is_dir()
+def _chosen_track(folders: list[Path], choice: Path, what: str, flag: str) -> Path | None:
+    """The track named in an episode's choice file, or None when nothing was chosen."""
+    if not choice.is_file():
+        return None
+    name = choice.read_text(encoding="utf-8").strip()
+    for folder in folders:
+        if (folder / name).is_file():
+            return folder / name
+    raise PipelineError(f"The {what} chosen for this episode ({name}) is no longer in "
+                        f"{' or '.join(str(f) for f in folders)}. Choose again with {flag}.")
+
+
+def _choose_track(folders: list[Path], choice: Path, query: str) -> Path:
+    """Save the one track whose file name contains `query` (any case) in the choice file."""
+    tracks = sorted({f for folder in folders if folder.is_dir()
                      for f in folder.iterdir() if f.suffix.lower() in AUDIO_SUFFIXES and not f.name.startswith(".")})
     matches = [t for t in tracks if query.lower() in t.name.lower()]
     if len(matches) != 1:
         listing = "\n".join(f"  {t.name}" for t in tracks) or "  (no tracks found)"
         what = "No track" if not matches else f"{len(matches)} tracks"
         raise PipelineError(f"{what} match '{query}'. Available:\n{listing}")
-    path = series.episodes_dir / f"ep{episode:02d}" / MUSIC_CHOICE
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(matches[0].name + "\n", encoding="utf-8")
+    choice.parent.mkdir(parents=True, exist_ok=True)
+    choice.write_text(matches[0].name + "\n", encoding="utf-8")
     return matches[0]
 
 
+def _choice_path(series: Series, episode: int, name: str) -> Path:
+    return series.episodes_dir / f"ep{episode:02d}" / name
+
+
+def pick_music(series: Series, root: Path, episode: int) -> Path | None:
+    """The track chosen with --music, else one from the series' music/ (or assets/music/) picked at
+    random, the same one every run of this episode."""
+    folders = music_folders(series, root)
+    return (_chosen_track(folders, _choice_path(series, episode, MUSIC_CHOICE), "music", "--music")
+            or _pick_track(folders, f"{series.name}-{episode}"))
+
+
+def choose_music(series: Series, root: Path, episode: int, query: str) -> Path:
+    """Save the one track whose file name contains `query` (any case) as this episode's music."""
+    return _choose_track(music_folders(series, root), _choice_path(series, episode, MUSIC_CHOICE), query)
+
+
 def pick_sfx(series: Series, root: Path, episode: int) -> Path | None:
-    """An ambience loop from the series' sfx/ (or assets/sfx/), the same one every run of this episode."""
-    return _pick_track([series.path / "sfx", root / "assets" / "sfx"], f"{series.name}-{episode}-sfx")
+    """The loop chosen with --sfx, else an ambience loop from the series' sfx/ (or assets/sfx/),
+    the same one every run of this episode."""
+    folders = sfx_folders(series, root)
+    return (_chosen_track(folders, _choice_path(series, episode, SFX_CHOICE), "ambience", "--sfx")
+            or _pick_track(folders, f"{series.name}-{episode}-sfx"))
+
+
+def choose_sfx(series: Series, root: Path, episode: int, query: str) -> Path:
+    """Save the one ambience loop whose file name contains `query` (any case) for this episode."""
+    return _choose_track(sfx_folders(series, root), _choice_path(series, episode, SFX_CHOICE), query)
 
 
 def start_offset(track_seconds: float, needed: float, seed: str) -> float:

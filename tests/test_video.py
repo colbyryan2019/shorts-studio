@@ -7,7 +7,7 @@ import pytest
 from PIL import Image, ImageChops, ImageStat
 
 import make_episode
-from pipeline.assemble import (NARRATION_LUFS, Bed, _audio_graph, bed_gain, choose_music, end_card_cta, length_warning,
+from pipeline.assemble import (NARRATION_LUFS, Bed, _audio_graph, bed_gain, choose_music, choose_sfx, end_card_cta, length_warning,
                                pick_music, pick_sfx, start_offset)
 from pipeline.captions import (CTA_STYLE, build_overlays, caption_style, find_font, phrase_times, render_text, render_words, split_phrases,
                                word_segments)
@@ -105,6 +105,19 @@ def test_sfx_comes_from_its_own_folder(project, series_dir):
     (project / "assets" / "sfx" / "waves.mp3").write_bytes(b"x")
     assert pick_sfx(series, project, 1) == project / "assets" / "sfx" / "waves.mp3"
 
+
+
+def test_sfx_can_be_chosen_per_episode(project, series_dir):
+    series = load_series("test-series", project, 1)
+    (project / "assets" / "sfx").mkdir(parents=True)
+    for name in ("Rain Heavy.mp3", "Waves Crashing.mp3"):
+        (project / "assets" / "sfx" / name).write_bytes(b"x")
+    assert choose_sfx(series, project, 1, "waves").name == "Waves Crashing.mp3"
+    assert pick_sfx(series, project, 1).name == "Waves Crashing.mp3"
+    assert pick_music(series, project, 1) is None
+    (project / "assets" / "sfx" / "Waves Crashing.mp3").unlink()
+    with pytest.raises(PipelineError, match="ambience chosen .* Choose again with --sfx"):
+        pick_sfx(series, project, 1)
 
 def test_caption_png_is_a_transparent_full_frame(tmp_path):
     out = tmp_path / "c.png"

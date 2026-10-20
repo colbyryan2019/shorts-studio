@@ -13,7 +13,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from pipeline.assemble import assemble, choose_music, length_warning
+from pipeline.assemble import assemble, choose_music, choose_sfx, length_warning
 from pipeline.captions import find_font
 from pipeline.config import PROJECT_ROOT, load_settings
 from pipeline.episode import Episode
@@ -76,6 +76,8 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--fake-voice", action="store_true", help="make silent placeholder narration instead of calling ElevenLabs")
     p.add_argument("--music", metavar="NAME",
                    help="use the track whose file name contains NAME for this episode (kept for later runs)")
+    p.add_argument("--sfx", metavar="NAME",
+                   help="use the ambience loop whose file name contains NAME for this episode (kept for later runs)")
     p.add_argument("--redo-voice", type=shot_numbers, action="append", default=[], metavar="SHOTS",
                    help="re-read these shots' narration: 5, 3,7, 2-4 or all (repeatable)")
     args = p.parse_args(argv)
@@ -115,6 +117,8 @@ def run(argv: list[str] | None = None, root: Path = PROJECT_ROOT,
     missing_sources_ok = args.fake_llm and not series.sources
     if args.music:
         print(f"Music for episode {args.episode}: {choose_music(series, root, args.episode, args.music).name}\n")
+    if args.sfx:
+        print(f"Ambience for episode {args.episode}: {choose_sfx(series, root, args.episode, args.sfx).name}\n")
     revising = args.revise is not None
 
     if args.outline:

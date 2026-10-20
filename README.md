@@ -131,7 +131,7 @@ python make_episode.py --series stranded-at-sea --episode 1                     
 python make_episode.py --series stranded-at-sea --episode 1 --fake-images --fake-voice   # whole pipeline, free
 ```
 
-- **Music:** put royalty-free `.mp3` tracks in `assets/music/` (or `series/<name>/music/` for that series only). Any length works. Each episode picks one track and a starting point in it, keeps both on every run, and fades the music in and out. `--music NAME` picks the track whose file name contains NAME for that episode instead.
+- **Music:** put royalty-free `.mp3` tracks in `assets/music/` (or `series/<name>/music/` for that series only). Any length works. Each episode picks one track and a starting point in it, keeps both on every run, and fades the music in and out. `--music NAME` picks the track whose file name contains NAME for that episode instead, and `--sfx NAME` does the same for the ambience loop.
 - **Levels:** the narration is brought to a standard loudness (-16 LUFS), and music sits `music_volume_db` under it (default -20; more negative is quieter), measured per track, so loud and quiet masters end up at the same level.
 - **Ambience:** optional looping beds (waves, wind) in `assets/sfx/` (or `series/<name>/sfx/`), picked and placed the same way, at `sfx_volume_db` (default -26).
 - **Captions:** put `.ttf` / `.otf` fonts in `assets/fonts/`; `caption_font` in `series.yaml` picks one by file name (default: the first). Style is `caption_style`: `highlight_word` (a few words at a time, the spoken word in yellow), `bold_white_outline` or `plain_white`.

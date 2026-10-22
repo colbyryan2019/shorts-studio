@@ -7,9 +7,9 @@ import pytest
 from PIL import Image, ImageChops, ImageStat
 
 import make_episode
-from pipeline.assemble import (NARRATION_LUFS, Bed, _audio_graph, bed_gain, choose_music, choose_sfx, end_card_cta, length_warning,
+from pipeline.assemble import (NARRATION_LUFS, Bed, _audio_graph, _video_graph, bed_gain, choose_music, choose_sfx, end_card_cta, length_warning,
                                pick_music, pick_sfx, start_offset)
-from pipeline.captions import (CTA_STYLE, build_overlays, caption_style, find_font, phrase_times, render_text, render_words, split_phrases,
+from pipeline.captions import (CTA_STYLE, Overlay, build_overlays, caption_style, find_font, phrase_times, render_text, render_words, split_phrases,
                                word_segments)
 from pipeline.episode import Episode
 from pipeline.errors import PipelineError
@@ -316,6 +316,16 @@ def test_music_fade_in_can_be_off():
     assert "afade=t=in" in ";".join(_audio_graph([Path("a"), Path("b")], [1.0, 1.0], bed, 2.0, 0.0, 1.0))
     off = ";".join(_audio_graph([Path("a"), Path("b")], [1.0, 1.0], bed, 2.0, 0.0, 0))
     assert "afade=t=in" not in off and "afade=t=out" in off
+
+
+def test_playback_speed_speeds_up_picture_and_sound():
+    bed = [(3, Bed(Path("m.mp3"), 0.0, -20))]
+    assert "atempo" not in ";".join(_audio_graph([Path("a")], [1.0], bed, 1.0))
+    assert "atempo=1.2," in ";".join(_audio_graph([Path("a")], [1.0], bed, 1.0, speed=1.2))
+    assert "atempo=1.2," in ";".join(_audio_graph([Path("a")], [1.0], [], 1.0, speed=1.2))  # no beds
+    card = Overlay(Path("card.png"), 5.0, 6.0)
+    assert "setpts" not in ";".join(_video_graph(9, card))
+    assert "setpts=PTS/1.2" in ";".join(_video_graph(9, card, 1.2))
 
 
 def test_end_card_follow_line(tmp_path):

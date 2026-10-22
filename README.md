@@ -274,6 +274,7 @@ Unknown keys are rejected, so a typo shows up as an error instead of silently do
 | `voice_id` | `""` | ElevenLabs narrator voice |
 | `voice_settings` | none | `stability`, `similarity_boost`, `style` (0–1), `speed` (0.7–1.2), `use_speaker_boost` |
 | `line_pause_seconds` | `0.3` | Silence after each line (0–3) |
+| `playback_speed` | `1.0` | Speeds up (or slows) the whole `final.mp4`, pictures, captions, narration and music alike, keeping the voice's pitch (0.5–2.0). The `seconds` target is checked against the sped-up length. |
 | `hook_motion` | `""` | Shot 1's motion whatever the script says: `punchin`, `pushin`, `rock`, `drift`, or `""` to use the script's motion |
 | `end_card_format` | `""` | Format the script fills in, e.g. `"DAY {day} · WATER: {water}"` |
 | `end_card_cta` | `""` | On-screen follow line; `{next}` = next episode, `{episode}` = this one |

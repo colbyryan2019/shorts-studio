@@ -15,6 +15,7 @@ music_volume_db: -20             # dB under the narration (more negative = quiet
 sfx_volume_db: -26               # ambience bed from sfx/ (or assets/sfx/); no files = no bed
 music_fade_in_seconds: 0         # music and ambience fade-in; 0 = full level from the first frame (hits harder)
 line_pause_seconds: 0.3          # silence after each line; raise for slower, heavier pacing
+playback_speed: 1.0              # speeds up the whole final video, pitch kept (e.g. 1.2); 0.5 to 2.0
 # voice_settings:                # optional ElevenLabs delivery; leave out to use the voice's defaults
 #   stability: 0.5               # lower = more expressive, higher = steadier
 #   similarity_boost: 0.75

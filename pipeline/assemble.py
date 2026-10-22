@@ -6,7 +6,8 @@ a fixed random point in their track, faded in and out underneath. Levels are mea
 the narration is brought to a standard loudness and each bed is set a fixed number of dB under it
 (music_volume_db, sfx_volume_db), whatever the track's own mastering. Captions are laid over
 as one stream of PNGs and the end card on top. final.json records a fingerprint of all inputs, so
-an unchanged episode isn't re-encoded.
+an unchanged episode isn't re-encoded. playback_speed then speeds up the whole result in the same
+pass (pictures, captions, narration and music alike; atempo keeps the pitch).
 """
 
 from __future__ import annotations
@@ -163,6 +164,7 @@ def _fingerprint(clips: list[ClipPlan], script: Script, timings: dict, words: di
         "narration_gain": narration_gain,
         "caption_style": series.config.caption_style,
         "fade_in": series.config.music_fade_in_seconds,
+        "speed": series.config.playback_speed,
         "v": FINAL_VERSION,
     }).encode())
     for p in [*audio, *(b.path for b in beds), *([font] if font else [])]:
@@ -180,7 +182,8 @@ def assemble(series: Series, ep: Episode, script: Script, clips: list[ClipPlan],
     style = caption_style(cfg.caption_style)
     font = find_font(root / "assets" / "fonts", cfg.caption_font)
     shot_seconds = [frames(timings[s.n][1]) / FPS for s in script.shots]
-    total = sum(shot_seconds)
+    total = sum(shot_seconds)  # before playback_speed; captions and beds are laid out on this timeline
+    speed = cfg.playback_speed
     seed = f"{series.name}-{ep.number}"
     music = _bed(pick_music(series, root, ep.number), total, seed + "-music-start", cfg.music_volume_db,
                  probe, measure)
@@ -188,7 +191,7 @@ def assemble(series: Series, ep: Episode, script: Script, clips: list[ClipPlan],
     beds = [b for b in (music, sfx) if b]
     final = ep.path / "final.mp4"
     record_path = ep.path / "final.json"
-    result = Assembly(final, total, music.path if music else None, font, rebuilt=False,
+    result = Assembly(final, total / speed, music.path if music else None, font, rebuilt=False,
                       sfx=sfx.path if sfx else None)
 
     audio = [ep.path / "audio" / f"{s.n:02d}.mp3" for s in script.shots]
@@ -218,20 +221,20 @@ def assemble(series: Series, ep: Episode, script: Script, clips: list[ClipPlan],
     caption_input = 1 + len(audio) + len(beds)
     args += ["-f", "concat", "-safe", "0", "-i", str(caption_list), "-i", str(end_card.png)]
 
-    graph = (_video_graph(caption_input, end_card)
+    graph = (_video_graph(caption_input, end_card, speed)
              + _audio_graph(audio, shot_seconds, list(zip(bed_inputs, beds)), total, narration_gain,
-                          cfg.music_fade_in_seconds))
+                          cfg.music_fade_in_seconds, speed))
     tmp = final.with_name("final.tmp.mp4")
     args += [
         "-filter_complex", ";".join(graph), "-map", "[v]", "-map", "[a]",
-        "-t", f"{total:.3f}", "-r", str(FPS),
+        "-t", f"{total / speed:.3f}", "-r", str(FPS),
         "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "192k", "-ar", "44100", "-movflags", "+faststart", str(tmp),
     ]
     run_ffmpeg(args, "assembling final.mp4")
     tmp.replace(final)
     record_path.write_text(json.dumps({
-        "fingerprint": fp, "seconds": round(total, 3),
+        "fingerprint": fp, "seconds": round(total / speed, 3), "playback_speed": speed,
         "narration_gain_db": narration_gain,
         "music": music.path.name if music else None, "music_start": music.offset if music else None,
         "music_gain_db": music.gain_db if music else None,
@@ -271,16 +274,17 @@ def _caption_stream(captions: list[Overlay], total: float, folder: Path) -> Path
     return path
 
 
-def _video_graph(caption_input: int, end_card: Overlay) -> list[str]:
+def _video_graph(caption_input: int, end_card: Overlay, speed: float = 1.0) -> list[str]:
+    tempo = f"setpts=PTS/{speed},fps={FPS}," if speed != 1 else ""
     return [
         f"[0:v][{caption_input}:v]overlay=0:0:eof_action=pass[vc]",
         f"[vc][{caption_input + 1}:v]overlay=0:0:enable='between(t,{end_card.start:.3f},{end_card.end:.3f})'[ve]",
-        "[ve]format=yuv420p[v]",
+        f"[ve]{tempo}format=yuv420p[v]",
     ]
 
 
 def _audio_graph(audio: list[Path], shot_seconds: list[float], beds: list[tuple[int, Bed]],
-                 total: float, narration_gain: float = 0.0, fade_in: float = 1.0) -> list[str]:
+                 total: float, narration_gain: float = 0.0, fade_in: float = 1.0, speed: float = 1.0) -> list[str]:
     graph = []
     for i, secs in enumerate(shot_seconds):
         # Pad (or trim) each line to exactly its shot's length, so line i starts with shot i.
@@ -289,6 +293,8 @@ def _audio_graph(audio: list[Path], shot_seconds: list[float], beds: list[tuple[
     graph.append("".join(f"[n{i}]" for i in range(len(audio)))
                  + f"concat=n={len(audio)}:v=0:a=1,volume={narration_gain}dB[narr]")
     limiter = f"alimiter=limit={PEAK_LIMIT}:level=disabled"
+    if speed != 1:
+        limiter = f"atempo={speed}," + limiter  # atempo takes 0.5-2.0, the range playback_speed allows
     if not beds:
         graph.append(f"[narr]{limiter}[a]")
         return graph

@@ -109,6 +109,14 @@ def test_prompt_contains_all_inputs(project, series_dir, good_script):
     assert "60-70 seconds" in system               # default target length
     assert "Rain finally comes." in task           # outline
     assert "Earlier Episode" in task               # recent episodes
+    assert "`stamp`" not in system                 # no stamp_format: stamps aren't offered
+
+
+def test_stamp_format_adds_the_stamp_rule(project, series_dir):
+    yaml = series_dir / "series.yaml"
+    yaml.write_text(yaml.read_text() + 'stamp_format: "T-MINUS MM:00, counting down"\n')
+    system = build_system(load_series("test-series", project, episode=1))
+    assert "`stamp`" in system and "T-MINUS MM:00, counting down" in system
 
 
 def test_retry_feeds_errors_back(series, good_script):

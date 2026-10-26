@@ -1,4 +1,4 @@
-"""Captions and the end card, drawn as transparent 1080x1920 PNGs that assembly lays over the video.
+"""Captions, stamps and the end card, drawn as transparent 1080x1920 PNGs that assembly lays over the video.
 
 Drawn with Pillow rather than ffmpeg's subtitle filters, so any ffmpeg build works. Timings come
 from the narration (no transcription): each line is split into short phrases, shown one at a time.
@@ -52,6 +52,8 @@ END_CARD_STYLE = TextStyle(size=104, fill=(255, 255, 255), stroke=4, stroke_fill
                            center_y=0.42, upper=True)
 # The follow line (series.yaml end_card_cta), between the end card and the captions.
 CTA_STYLE = TextStyle(size=64, fill=(255, 210, 40), stroke=4, stroke_fill=(0, 0, 0), center_y=0.53, upper=True)
+# A shot's stamp (e.g. a countdown), near the top but below the platform's header.
+STAMP_STYLE = TextStyle(size=84, fill=(255, 64, 48), stroke=7, stroke_fill=(0, 0, 0), center_y=0.13, upper=True)
 
 
 @dataclass
@@ -237,3 +239,23 @@ def build_overlays(timings: list[tuple[str, float, float, list | None]], end_car
         with Image.open(card) as base, Image.open(line) as top:
             Image.alpha_composite(base, top).save(card, format="PNG")
     return captions, Overlay(card, round(max(t - END_CARD_SECONDS, 0.0), 3), round(t, 3))
+
+
+def build_stamps(stamps: list[str | None], shot_seconds: list[float], font_path: Path | None, out_dir: Path,
+                 until: float) -> list[Overlay]:
+    """Stamp PNGs, in order. A shot's stamp holds until a later shot sets another ("" hides it), and
+    none shows past `until` (the end card). Call after build_overlays, which clears out_dir."""
+    spans, t = [], 0.0
+    for text, secs in zip(stamps, shot_seconds):
+        if text is not None and (not spans or spans[-1][0] != text):
+            spans.append((text, t))
+        t += secs
+    overlays = []
+    for i, (text, start) in enumerate(spans):
+        end = min(spans[i + 1][1] if i + 1 < len(spans) else until, until)
+        if not text or start >= end:
+            continue
+        png = out_dir / f"stamp{i + 1:02d}.png"
+        render_text(text, STAMP_STYLE, font_path, png)
+        overlays.append(Overlay(png, round(start, 3), round(end, 3)))
+    return overlays

@@ -22,6 +22,7 @@ class Shot(BaseModel):
     motion: Motion
     refs: list[str] = []
     pause_after: float | None = Field(default=None, ge=0, le=3)  # seconds; None = the series line_pause_seconds
+    stamp: str | None = Field(default=None, max_length=24)  # on-screen label from this shot on; "" hides it
 
 
 class Claim(BaseModel):

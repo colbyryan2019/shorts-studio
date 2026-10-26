@@ -191,7 +191,7 @@ A script looks like this:
 }
 ```
 
-`motion` is `pushin`, `rock`, `drift` or `genvideo`. `pause_after` is optional: it sets the seconds of silence after a line, from 0 to 3, for a held dramatic beat.
+`motion` is `pushin`, `rock`, `drift` or `genvideo`. `pause_after` is optional: it sets the seconds of silence after a line, from 0 to 3, for a held dramatic beat. `stamp` is optional too: a short label (up to 24 characters, e.g. `"T-MINUS 24:00"`) shown in red at the top of the frame from that shot until a later shot sets another; `""` hides it. The script writer is only told about stamps when the series sets `stamp_format`.
 
 ### 5. Images, narration and video
 
@@ -239,6 +239,7 @@ python make_episode.py --series stranded-at-sea --episode 1             # do it
 - **Levels.** The narration is brought to −16 LUFS. Music sits `music_volume_db` under it and ambience sits `sfx_volume_db` under it. Each track's loudness is measured, so loud and quiet masters end up at the same level, and a limiter keeps peaks under about −1 dBFS.
 - **Music and ambience.** Each episode picks one track and a starting point in it, at random but fixed for that episode, so every re-run sounds the same. Short tracks loop. Both fade in over `music_fade_in_seconds` (0 means full level on the first frame) and fade out over the last 2 s.
 - **End card.** `end_card` from the script shows in white capitals for the last 2 s. If the series sets `end_card_cta` (e.g. `"Follow for part {next}"`), a smaller yellow follow line appears under it. That line is on screen only; the narration still ends on the cliffhanger.
+- **Stamps.** A shot's `stamp` shows near the top of the frame until a later shot changes it, and is hidden under the end card.
 - **Length.** The target is `seconds` in `series.yaml` (default 60–70 s). You get a note if the episode falls outside it. To lengthen a series, raise `seconds` and `words` together.
 
 ### 6. Review before posting
@@ -278,6 +279,7 @@ Unknown keys are rejected, so a typo shows up as an error instead of silently do
 | `hook_motion` | `""` | Shot 1's motion whatever the script says: `punchin`, `pushin`, `rock`, `drift`, or `""` to use the script's motion |
 | `end_card_format` | `""` | Format the script fills in, e.g. `"DAY {day} · WATER: {water}"` |
 | `end_card_cta` | `""` | On-screen follow line; `{next}` = next episode, `{episode}` = this one |
+| `stamp_format` | `""` | What shots' on-screen `stamp` labels look like and when to use them (e.g. a countdown); empty = no stamps |
 | `caption_style` | `bold_white_outline` | `highlight_word`, `bold_white_outline` or `plain_white` (the template sets `highlight_word`) |
 | `caption_font` | `""` | A file name in `assets/fonts/`; empty means the first one |
 | `music_volume_db` | `-20` | Music level under the narration (more negative = quieter) |
@@ -496,7 +498,7 @@ A one-off branding helper, not part of the pipeline. It draws four square profil
 | Name | What it does |
 |---|---|
 | `SCHEMA_EXAMPLE` | The JSON shape shown to Claude. |
-| `build_system(series)` | The system prompt: the series' role, `house_rules.md`, the bible, the output format and rules (shot/word ranges, target seconds, motions, genvideo cap, allowed refs with their descriptions and keywords, end card format, `pause_after`, the claims rule), and every source file. |
+| `build_system(series)` | The system prompt: the series' role, `house_rules.md`, the bible, the output format and rules (shot/word ranges, target seconds, motions, genvideo cap, allowed refs with their descriptions and keywords, end card format, `pause_after`, `stamp` when `stamp_format` is set, the claims rule), and every source file. |
 | `build_task(series, episode, outline, current, notes)` | The user message: recent episodes for continuity, the outline, and either "write it" or the current script plus revision notes. |
 | `build_fix_prompt(task, reply, errors)` | The retry message: the original task, the failed reply, and the errors to fix. |
 | `extract_json(text)` | Parses the reply, tolerating code fences or stray prose around the JSON object. |
@@ -623,6 +625,7 @@ A one-off branding helper, not part of the pipeline. It draws four square profil
 | `render_words(words, highlight, style, font, out)` | The same, word by word, so the spoken word can take the highlight colour. |
 | `word_segments(text, words, start, shot_end)` | For `highlight_word`: one segment per spoken word (its phrase, which word is lit, start and end). Returns `None` if the timings don't line up with the text. |
 | `build_overlays(timings, end_card, style, font, out_dir, cta)` | Clears old PNGs and renders every caption, word-timed where possible, else by phrase. Then it renders the end card (with the follow line composited on) for the last 2 s. |
+| `build_stamps(stamps, shot_seconds, font, out_dir, until)` | One PNG per stamp, each held until a later shot changes it and cut off at the end card. |
 
 #### `assemble.py`: the final video
 
@@ -639,8 +642,8 @@ A one-off branding helper, not part of the pipeline. It draws four square profil
 | `_bed(...)` | Builds a `Bed`, measuring only the part of the track that will be heard. |
 | `_fingerprint(...)` | Hash of every input to `final.mp4`. |
 | `assemble(series, ep, script, clips, timings, root, words, probe, measure)` | Picks beds and measures levels. If the fingerprint matches `final.json`, it returns without re-encoding. Otherwise it renders caption PNGs, builds a concat list of clips and an ffconcat stream of captions, and runs one ffmpeg pass. It writes to a temp file then moves it into place, and records `final.json`. |
-| `_caption_stream(captions, total, folder)` | An ffconcat list showing each caption for its time, with blank frames in gaps. One input instead of hundreds keeps the ffmpeg graph small. |
-| `_video_graph(caption_input, end_card)` | Overlays the caption stream, then the end card during its time window. |
+| `_caption_stream(captions, total, folder, name)` | An ffconcat list showing each caption for its time, with blank frames in gaps. One input instead of hundreds keeps the ffmpeg graph small. |
+| `_video_graph(caption_input, end_card, speed, stamp_input)` | Overlays the stamp stream (if any), the caption stream, then the end card during its time window. |
 | `_audio_graph(audio, shot_seconds, beds, total, narration_gain, fade_in)` | Pads each line to its shot's exact length and joins the lines. Sets the narration gain, trims each bed with its gain and fades, mixes everything without normalizing, and adds the peak limiter. |
 | `end_card_cta(template, episode)` | Fills in `{episode}` and `{next}`. |
 | `length_warning(seconds, target)` | A note when the episode is under or over the target length. |

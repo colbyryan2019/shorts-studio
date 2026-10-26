@@ -131,7 +131,8 @@ def write_review(series: Series, ep: Episode, script: Script, *, mode: str, stat
         motion = shot.motion
         if shot.n in rendered and rendered[shot.n] != shot.motion:
             motion = f"{shot.motion} → {rendered[shot.n]}"
-        lines.append(f"| {shot.n} | {_cell(shot.narration)} | {seconds} | {motion} |")
+        stamp = f"**[{shot.stamp}]** " if shot.stamp else ""
+        lines.append(f"| {shot.n} | {stamp}{_cell(shot.narration)} | {seconds} | {motion} |")
     if not rendered:
         lines += ["", "Clips not rendered yet: the motion column shows the plan."]
 

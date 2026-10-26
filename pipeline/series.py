@@ -49,6 +49,7 @@ class SeriesConfig(BaseModel):
     max_genvideo_shots: int = Field(ge=0)
     end_card_format: str = ""
     end_card_cta: str = ""  # follow line under the end card, e.g. "Follow for part {next}"; {episode} works too
+    stamp_format: str = ""  # on-screen label at the top, e.g. a countdown "T-MINUS {mm}:{ss}"; empty = no stamps
     default_motion: Literal["pushin", "rock", "drift"]
     hook_motion: Literal["", "punchin", "pushin", "rock", "drift"] = ""  # shot 1's motion; empty = as scripted
     caption_style: str = ""

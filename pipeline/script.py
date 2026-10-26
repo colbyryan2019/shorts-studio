@@ -62,6 +62,12 @@ def build_system(series: Series) -> str:
         "Leave it out otherwise, and keep it on shots that already have it unless asked to change it.\n"
         f"- {claims_rule}",
     ]
+    if cfg.stamp_format:
+        parts[-1] += (
+            "\n- Optional `stamp`: a short label shown at the top of the frame from this shot until a later shot "
+            "sets a new one (\"\" hides it). Set it only on shots where it changes. "
+            f"Format and when to use it: {cfg.stamp_format}"
+        )
     if series.sources:
         parts.append(
             "# Source material\n"
@@ -178,7 +184,8 @@ def format_summary(script: Script, series: Series, status: str, warnings: list[s
     ]
     for shot in script.shots:
         refs = f"  refs: {', '.join(shot.refs)}" if shot.refs else ""
-        lines.append(f"{shot.n:>3}. [{shot.motion}] {shot.narration}")
+        stamp = f"<{shot.stamp}> " if shot.stamp is not None else ""
+        lines.append(f"{shot.n:>3}. [{shot.motion}] {stamp}{shot.narration}")
         lines.append(f"       image: {shot.image_prompt}{refs}")
     lines.append("")
     lines.append("Claims:" if script.claims else "Claims: none")

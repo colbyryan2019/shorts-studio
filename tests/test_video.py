@@ -9,7 +9,7 @@ from PIL import Image, ImageChops, ImageStat
 import make_episode
 from pipeline.assemble import (NARRATION_LUFS, Bed, _audio_graph, _video_graph, bed_gain, choose_music, choose_sfx, end_card_cta, length_warning,
                                pick_music, pick_sfx, start_offset)
-from pipeline.captions import (CTA_STYLE, Overlay, build_overlays, caption_style, find_font, phrase_times, render_text, render_words, split_phrases,
+from pipeline.captions import (CTA_STYLE, STAMP_STYLE, Overlay, build_overlays, build_stamps, caption_style, find_font, phrase_times, render_text, render_words, split_phrases,
                                word_segments)
 from pipeline.episode import Episode
 from pipeline.errors import PipelineError
@@ -337,3 +337,36 @@ def test_end_card_follow_line(tmp_path):
     r, g, b = CTA_STYLE.fill
     yellow = lambda path: sum(n for n, p in Image.open(path).getcolors(1 << 24) if p[:3] == (r, g, b) and p[3] == 255)
     assert yellow(plain.png) == 0 and yellow(card.png) > 500
+
+
+def test_stamps_hold_until_changed_and_stop_at_the_end_card(tmp_path):
+    stamps = build_stamps(["T-MINUS 30:00", None, "T-MINUS 20:00", "", None, "T-MINUS 01:00"],
+                          [2.0, 2.0, 2.0, 2.0, 2.0, 2.0], None, tmp_path, until=11.0)
+    assert [(s.start, s.end) for s in stamps] == [(0.0, 4.0), (4.0, 6.0), (10.0, 11.0)]  # "" hid shots 4-5
+    r, g, b = STAMP_STYLE.fill
+    red = sum(n for n, p in Image.open(stamps[0].png).getcolors(1 << 24) if p[:3] == (r, g, b) and p[3] == 255)
+    assert red > 500
+    assert build_stamps([None, None], [1.0, 1.0], None, tmp_path, until=2.0) == []
+
+
+def test_stamps_are_overlaid_only_when_present():
+    card = Overlay(Path("card.png"), 5.0, 6.0)
+    assert "[vs]" not in ";".join(_video_graph(9, card))
+    graph = ";".join(_video_graph(9, card, stamp_input=11))
+    assert "[0:v][11:v]overlay" in graph and "[vs][9:v]overlay" in graph
+
+
+@needs_ffmpeg
+def test_stamps_end_to_end(project, good_script, monkeypatch):
+    monkeypatch.setattr("pipeline.voice.FAKE_WORDS_PER_SECOND", 20)
+    good_script["shots"][0]["stamp"] = "T-MINUS 30:00"
+    good_script["shots"][3]["stamp"] = "T-MINUS 20:00"
+    series = load_series("test-series", project, 1)
+    ep = Episode.of(series, 1)
+    ep.save_script(good_script)
+    ep.approve()
+    assert make_episode.run(["--series", "test-series", "--episode", "1", "--fake-images", "--fake-voice"],
+                            root=project) == 0
+    assert (ep.path / "final.mp4").is_file()
+    assert sorted(p.name for p in (ep.path / "captions").glob("stamp*.png")) == ["stamp01.png", "stamp02.png"]
+    assert "**[T-MINUS 20:00]**" in (ep.path / "review.md").read_text()

@@ -5,7 +5,7 @@ it starts exactly at the shot's first frame; music and an optional ambience bed 
 a fixed random point in their track, faded in and out underneath. Levels are measured, not guessed:
 the narration is brought to a standard loudness and each bed is set a fixed number of dB under it
 (music_volume_db, sfx_volume_db), whatever the track's own mastering. Captions are laid over
-as one stream of PNGs and the end card on top. final.json records a fingerprint of all inputs, so
+as one stream of PNGs, any stamps as a second, and the end card on top. final.json records a fingerprint of all inputs, so
 an unchanged episode isn't re-encoded. playback_speed then speeds up the whole result in the same
 pass (pictures, captions, narration and music alike; atempo keeps the pitch).
 """
@@ -18,7 +18,7 @@ import random
 from dataclasses import dataclass
 from pathlib import Path
 
-from .captions import Overlay, build_overlays, caption_style, find_font
+from .captions import Overlay, build_overlays, build_stamps, caption_style, find_font
 from .episode import Episode
 from .errors import PipelineError
 from .ffmpeg import FPS, frames, loudness, run_ffmpeg
@@ -166,6 +166,8 @@ def _fingerprint(clips: list[ClipPlan], script: Script, timings: dict, words: di
         "fade_in": series.config.music_fade_in_seconds,
         "speed": series.config.playback_speed,
         "v": FINAL_VERSION,
+        # only when used, so episodes without stamps keep their fingerprint and aren't re-encoded
+        **({"stamps": [s.stamp for s in script.shots]} if any(s.stamp is not None for s in script.shots) else {}),
     }).encode())
     for p in [*audio, *(b.path for b in beds), *([font] if font else [])]:
         h.update(hashlib.sha256(p.read_bytes()).digest())
@@ -209,6 +211,8 @@ def assemble(series: Series, ep: Episode, script: Script, clips: list[ClipPlan],
     concat_list = ep.path / "clips" / "concat.txt"
     concat_list.write_text("".join(f"file '{c.path.name}'\n" for c in clips), encoding="utf-8")
     caption_list = _caption_stream(captions, total, ep.path / "captions")
+    stamps = build_stamps([s.stamp for s in script.shots], shot_seconds, font, ep.path / "captions", end_card.start)
+    stamp_list = _caption_stream(stamps, total, ep.path / "captions", "stamps.txt") if stamps else None
 
     args = ["-f", "concat", "-safe", "0", "-i", str(concat_list)]
     for a in audio:
@@ -220,8 +224,10 @@ def assemble(series: Series, ep: Episode, script: Script, clips: list[ClipPlan],
         args += (["-ss", f"{b.offset:.3f}"] if b.offset else ["-stream_loop", "-1"]) + ["-i", str(b.path)]
     caption_input = 1 + len(audio) + len(beds)
     args += ["-f", "concat", "-safe", "0", "-i", str(caption_list), "-i", str(end_card.png)]
+    if stamp_list:
+        args += ["-f", "concat", "-safe", "0", "-i", str(stamp_list)]
 
-    graph = (_video_graph(caption_input, end_card, speed)
+    graph = (_video_graph(caption_input, end_card, speed, stamp_input=caption_input + 2 if stamp_list else None)
              + _audio_graph(audio, shot_seconds, list(zip(bed_inputs, beds)), total, narration_gain,
                           cfg.music_fade_in_seconds, speed))
     tmp = final.with_name("final.tmp.mp4")
@@ -246,7 +252,7 @@ def assemble(series: Series, ep: Episode, script: Script, clips: list[ClipPlan],
     return result
 
 
-def _caption_stream(captions: list[Overlay], total: float, folder: Path) -> Path:
+def _caption_stream(captions: list[Overlay], total: float, folder: Path, name: str = "captions.txt") -> Path:
     """An ffconcat list showing each caption PNG for its time, with a blank frame in any gaps.
 
     One input instead of one per caption keeps the ffmpeg graph small however many words there are.
@@ -269,15 +275,19 @@ def _caption_stream(captions: list[Overlay], total: float, folder: Path) -> Path
     for png, secs in entries:
         lines += [f"file '{png.name}'", f"duration {secs:.3f}"]
     lines.append(f"file '{entries[-1][0].name}'" if entries else f"file '{blank.name}'")  # holds the last one
-    path = folder / "captions.txt"
+    path = folder / name
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
 
 
-def _video_graph(caption_input: int, end_card: Overlay, speed: float = 1.0) -> list[str]:
+def _video_graph(caption_input: int, end_card: Overlay, speed: float = 1.0,
+                 stamp_input: int | None = None) -> list[str]:
     tempo = f"setpts=PTS/{speed},fps={FPS}," if speed != 1 else ""
-    return [
-        f"[0:v][{caption_input}:v]overlay=0:0:eof_action=pass[vc]",
+    stamps = []
+    if stamp_input is not None:
+        stamps = [f"[0:v][{stamp_input}:v]overlay=0:0:eof_action=pass[vs]"]
+    return stamps + [
+        f"[{'vs' if stamps else '0:v'}][{caption_input}:v]overlay=0:0:eof_action=pass[vc]",
         f"[vc][{caption_input + 1}:v]overlay=0:0:enable='between(t,{end_card.start:.3f},{end_card.end:.3f})'[ve]",
         f"[ve]{tempo}format=yuv420p[v]",
     ]

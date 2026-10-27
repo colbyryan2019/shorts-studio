@@ -11,3 +11,5 @@ assets/fonts/*
 assets/sfx/*
 !assets/sfx/.gitkeep
 assets/branding/*
+/covers
+

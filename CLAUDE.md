@@ -10,6 +10,13 @@ A reusable pipeline that turns a short episode outline into a finished vertical 
 - Ask before adding dependencies beyond those listed in SPEC.md.
 - Python 3.11+, use a virtual environment in `.venv/`, keep a `requirements.txt`.
 
+## After an episode finishes
+
+- Once an episode has its `final.mp4`, make its labeled cover (free, no API calls):
+  `python tools/make_covers.py --series <name> --episode <N>`
+  It saves `episodes/epNN/cover.png` and a copy in `covers/<series>-epNN.png` (git-ignored).
+- Each series' cover label and color live in `series/<name>/cover.yaml` (`label`, `color`). When creating a new series, add one with a short label and a color not used by another series.
+
 ## Safety
 
 - API keys live only in `.env` (git-ignored). Never print, log or commit them. Load them with python-dotenv from the project's `.env`, never by exporting them in the shell.

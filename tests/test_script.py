@@ -7,7 +7,7 @@ from pipeline.episode import Episode
 from pipeline.errors import PipelineError
 from pipeline.llm import FakeLLMClient
 from pipeline.schema import validate_script
-from pipeline.script import build_system, build_task, extract_json, write_script
+from pipeline.script import build_system, build_task, extract_json, prompt_sources, write_script
 from pipeline.series import load_series
 
 
@@ -99,7 +99,7 @@ def test_prompt_contains_all_inputs(project, series_dir, good_script):
     (d / "script.json").write_text(json.dumps({"title": "Earlier Episode"}))
     series = load_series("test-series", project, episode=2)
 
-    system = build_system(series)
+    system = build_system(series, 2)
     task = build_task(series, 2, "Rain finally comes.")
     assert "Second person only" in system          # house rules
     assert "lost at sea" in system                 # bible
@@ -115,8 +115,34 @@ def test_prompt_contains_all_inputs(project, series_dir, good_script):
 def test_stamp_format_adds_the_stamp_rule(project, series_dir):
     yaml = series_dir / "series.yaml"
     yaml.write_text(yaml.read_text() + 'stamp_format: "T-MINUS MM:00, counting down"\n')
-    system = build_system(load_series("test-series", project, episode=1))
+    system = build_system(load_series("test-series", project, episode=1), 1)
     assert "`stamp`" in system and "T-MINUS MM:00, counting down" in system
+
+
+def test_continuity_is_sent_when_present(project, series_dir):
+    assert "Story so far" not in build_system(load_series("test-series", project, episode=1), 1)
+    (series_dir / "continuity.md").write_text("The dinghy has a slow leak.\n")
+    system = build_system(load_series("test-series", project, episode=2), 2)
+    assert "Story so far" in system and "slow leak" in system
+
+
+def test_prompt_sources_skip_old_episodes(project, series_dir):
+    sources = series_dir / "sources"
+    for name in ("ep01-research.md", "ep02-research.md", "ep03-research.md", "ep05-research.md", "ep05-fish.md"):
+        (sources / name).write_text(f"Text of {name}.\n")
+    d = series_dir / "episodes" / "ep04"
+    d.mkdir(parents=True)
+    (d / "script.json").write_text(json.dumps({"claims": [{"claim": "x", "source_file": "ep02-research.md"}]}))
+    series = load_series("test-series", project, episode=5)
+
+    picked = prompt_sources(series, 5)
+    # This episode's files, general files, and files a recent episode cites.
+    assert sorted(picked) == ["ep02-research.md", "ep05-fish.md", "ep05-research.md", "survival-manual.txt"]
+    # A revision also gets whatever the current script cites.
+    current = {"claims": [{"claim": "y", "source_file": "ep01-research.md"}]}
+    assert "ep01-research.md" in prompt_sources(series, 5, current)
+    system = build_system(series, 5)
+    assert "Text of ep05-fish.md" in system and "Text of ep03-research.md" not in system
 
 
 def test_retry_feeds_errors_back(series, good_script):

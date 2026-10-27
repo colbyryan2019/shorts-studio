@@ -77,7 +77,7 @@ def test_ref_without_image_is_a_warning(project, with_refs, good_script):
 
 
 def test_script_prompt_describes_refs(project, with_refs):
-    system = build_system(load_series("test-series", project, 1))
+    system = build_system(load_series("test-series", project, 1), 1)
     assert "survivor: A stick figure in a wide-brim hat." in system
     assert "survivor, figure" in system
 

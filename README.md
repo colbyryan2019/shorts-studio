@@ -299,7 +299,8 @@ Unknown keys are rejected, so a typo shows up as an error instead of silently do
 |---|---|
 | `bible.md` | Premise, main character, narrator, tone, series rules, recurring characters, season arc. Sent with every script prompt, after `house_rules.md` (it can add to the house rules but not override them). |
 | `style_line.txt` | One paragraph of art direction, put at the start of every image prompt. |
-| `sources/*.txt`, `*.md` | Fact sources. All of them are sent with the script prompt; claims must cite them by file name. |
+| `continuity.md` | Optional. The story so far: one line per episode, current supplies, where everyone is, open threads. Sent with every script prompt after the bible. Update it by hand after each episode. The last 3 episodes' scripts are sent as well, so this is for what happened further back. |
+| `sources/*.txt`, `*.md` | Fact sources; claims must cite them by file name. A file named `epNN-...` belongs to episode NN and is only sent with that episode's prompt, or with a later one whose last 3 episodes (or current script, when revising) cite it. Files without that prefix are sent every time, so drop the prefix on a source a later episode needs again. |
 | `refs/refs.yaml` | Recurring characters/objects: `description` and `keywords`. |
 | `refs/<name>.png` | The picked reference image for each ref. |
 | `music/`, `sfx/` | Optional series-only tracks, used instead of `assets/`. |
@@ -430,9 +431,10 @@ A one-off branding helper, not part of the pipeline. It draws four square profil
 | `VoiceSettings` | Pydantic model for optional ElevenLabs settings, with range checks. `as_dict()` drops unset values. |
 | `SeriesConfig` | Pydantic model of `series.yaml` (see the [reference](#seriesyaml)). Forbids unknown keys; `_check_ranges` ensures each `[min, max]` has `1 <= min <= max`. |
 | `RefSpec` | One entry of `refs.yaml`: `description` and at least one keyword. |
-| `Series` | Everything loaded for a series: config, house rules, bible, style line, sources (`{file name: text}`), picked ref names, the last 3 episodes' scripts and the ref specs. Properties `episodes_dir` and `refs_dir`; `ref_image(name)` finds `refs/<name>.png/.jpg/.jpeg/.webp`. |
+| `Series` | Everything loaded for a series: config, house rules, bible, style line, sources (`{file name: text}`), picked ref names, the last 3 episodes' scripts, the ref specs and `continuity.md` (empty if absent). Properties `episodes_dir` and `refs_dir`; `ref_image(name)` finds `refs/<name>.png/.jpg/.jpeg/.webp`. |
 | `episode_dir_name(n)` | `1` → `ep01`. |
 | `_read_required(path, what)` | Reads a required text file; errors if it's missing, empty, or still contains template `TODO:` lines. |
+| `_read_optional(path)` | Reads an optional text file, or `""` if it doesn't exist. |
 | `load_config(path)` | Parses and validates `series.yaml`, turning YAML and validation errors into readable messages. |
 | `_load_sources(folder)` | Every non-empty, non-hidden `.txt` / `.md` in `sources/`. |
 | `_load_refs(folder)` | Names (file stems) of the image files in `refs/`. |
@@ -498,7 +500,8 @@ A one-off branding helper, not part of the pipeline. It draws four square profil
 | Name | What it does |
 |---|---|
 | `SCHEMA_EXAMPLE` | The JSON shape shown to Claude. |
-| `build_system(series)` | The system prompt: the series' role, `house_rules.md`, the bible, the output format and rules (shot/word ranges, target seconds, motions, genvideo cap, allowed refs with their descriptions and keywords, end card format, `pause_after`, `stamp` when `stamp_format` is set, the claims rule), and every source file. |
+| `prompt_sources(series, episode, current)` | The source files a script prompt gets: this episode's `epNN-` files, files with no episode prefix, and any file cited by the last 3 episodes' claims or by `current`. |
+| `build_system(series, episode, current)` | The system prompt: the series' role, `house_rules.md`, the bible, `continuity.md` if present, the output format and rules (shot/word ranges, target seconds, motions, genvideo cap, allowed refs with their descriptions and keywords, end card format, `pause_after`, `stamp` when `stamp_format` is set, the claims rule), and the sources from `prompt_sources`. |
 | `build_task(series, episode, outline, current, notes)` | The user message: recent episodes for continuity, the outline, and either "write it" or the current script plus revision notes. |
 | `build_fix_prompt(task, reply, errors)` | The retry message: the original task, the failed reply, and the errors to fix. |
 | `extract_json(text)` | Parses the reply, tolerating code fences or stray prose around the JSON object. |

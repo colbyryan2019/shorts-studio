@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 from .errors import PipelineError
 from .llm import LLMClient
@@ -21,7 +22,30 @@ SCHEMA_EXAMPLE = {
 }
 
 
-def build_system(series: Series) -> str:
+EPISODE_SOURCE_RE = re.compile(r"^ep(\d+)-")  # sources/ep03-research.md belongs to episode 3
+
+
+def prompt_sources(series: Series, episode: int, current: dict | None = None) -> dict[str, str]:
+    """The source files a script prompt needs, so prompts don't grow with every episode.
+
+    That is this episode's files (epNN-*), general files (no epNN- prefix), and any file cited by the
+    recent episodes' claims or by `current`. Claims may still cite any file in sources/.
+    """
+    cited = set()
+    for script in [*series.recent_scripts.values(), current or {}]:
+        claims = script.get("claims") if isinstance(script, dict) else None
+        for claim in claims if isinstance(claims, list) else []:
+            if isinstance(claim, dict):
+                cited.add(claim.get("source_file"))
+    picked = {}
+    for name, text in series.sources.items():
+        m = EPISODE_SOURCE_RE.match(name)
+        if m is None or int(m.group(1)) == episode or name in cited:
+            picked[name] = text
+    return picked
+
+
+def build_system(series: Series, episode: int, current: dict | None = None) -> str:
     cfg = series.config
     refs = ", ".join(series.refs) or "(none yet: every shot must use an empty refs list)"
     ref_rules = ""
@@ -46,6 +70,13 @@ def build_system(series: Series) -> str:
         "# House rules\nThese apply to every series. The series bible can add rules but never override these.\n\n"
         + series.house_rules,
         "# Series bible\n" + series.bible,
+    ]
+    if series.continuity:
+        parts.append(
+            "# Story so far\nWhere things stand after the earlier episodes. Stay consistent with it.\n\n"
+            + series.continuity
+        )
+    parts += [
         "# Output format\n"
         "Reply with one JSON object and nothing else: no prose, no markdown code fences. Shape:\n"
         + json.dumps(SCHEMA_EXAMPLE, indent=2, ensure_ascii=False)
@@ -68,10 +99,11 @@ def build_system(series: Series) -> str:
             "sets a new one (\"\" hides it). Set it only on shots where it changes. "
             f"Format and when to use it: {cfg.stamp_format}"
         )
-    if series.sources:
+    sources = prompt_sources(series, episode, current)
+    if sources:
         parts.append(
             "# Source material\n"
-            + "\n\n".join(f'<source file="{name}">\n{text}\n</source>' for name, text in series.sources.items())
+            + "\n\n".join(f'<source file="{name}">\n{text}\n</source>' for name, text in sources.items())
         )
     return "\n\n".join(parts)
 
@@ -148,7 +180,7 @@ def write_script(
     On validation failure, retries once with the errors fed back, then raises PipelineError.
     Returns the raw JSON (as saved) and its validation result.
     """
-    system = build_system(series)
+    system = build_system(series, episode, current)
     task = build_task(series, episode, outline, current=current, notes=notes)
 
     reply, data, result = _attempt(client, system, task, series, missing_sources_ok)

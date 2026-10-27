@@ -1,4 +1,4 @@
-"""Load a series folder: series.yaml, bible, style line, sources, refs and recent episodes."""
+"""Load a series folder: series.yaml, bible, style line, continuity, sources, refs and recent episodes."""
 
 from __future__ import annotations
 
@@ -99,6 +99,7 @@ class Series:
     refs: list[str]  # ref names (file stems), e.g. "dinghy" for refs/dinghy.png
     recent_scripts: dict[int, dict] = field(default_factory=dict)  # episode number -> script.json
     ref_specs: dict[str, RefSpec] = field(default_factory=dict)  # from refs/refs.yaml, may be empty
+    continuity: str = ""  # continuity.md: the story so far, kept by hand; empty if absent
 
     @property
     def episodes_dir(self) -> Path:
@@ -131,6 +132,10 @@ def _read_required(path: Path, what: str) -> str:
         raise PipelineError(f"{what} still has {len(todo)} TODO line(s) from the template, starting with "
                             f"\"{todo[0][:80]}\". Fill them in (and delete the TODO lines): {path}")
     return text
+
+
+def _read_optional(path: Path) -> str:
+    return path.read_text(encoding="utf-8").strip() if path.is_file() else ""
 
 
 def load_config(path: Path) -> SeriesConfig:
@@ -228,4 +233,5 @@ def load_series(name: str, root: Path, episode: int) -> Series:
         refs=_load_refs(path / "refs"),
         recent_scripts=_load_recent_scripts(path / "episodes", before=episode),
         ref_specs=load_ref_specs(path / "refs" / "refs.yaml"),
+        continuity=_read_optional(path / "continuity.md"),
     )

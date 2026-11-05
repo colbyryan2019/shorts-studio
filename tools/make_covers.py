@@ -13,11 +13,16 @@ Per-series label and color come from series/<name>/cover.yaml (optional):
     label: "NUKE NYC"
     color: "#FFD400"
 
-Without it, the label is the series title in capitals and the color is picked from a fixed palette.
+    subtitle: "{end_card}"   # optional; the line under the label, default "PART {part}"
+
+The subtitle can use {part} (episode number), {title} and {end_card} (from the episode's script.json);
+standalone series with no parts use it instead of "PART N". Without cover.yaml, the label is the series
+title in capitals, the color is picked from a fixed palette and the subtitle is "PART N".
 """
 
 import argparse
 import hashlib
+import json
 import sys
 from pathlib import Path
 
@@ -34,14 +39,21 @@ def font(size: int) -> ImageFont.ImageFont:
     return ImageFont.truetype(str(fonts[0]), size) if fonts else ImageFont.load_default(size)
 
 
-def series_style(series_dir: Path) -> tuple[str, str]:
+def series_style(series_dir: Path) -> tuple[str, str, str]:
     meta = yaml.safe_load((series_dir / "series.yaml").read_text(encoding="utf-8")) or {}
     title = str(meta.get("title") or series_dir.name.replace("-", " "))
     cfg_path = series_dir / "cover.yaml"
     cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) if cfg_path.is_file() else {}
     cfg = cfg or {}
     default_color = PALETTE[int(hashlib.md5(series_dir.name.encode()).hexdigest(), 16) % len(PALETTE)]
-    return str(cfg.get("label") or title.upper()), str(cfg.get("color") or default_color)
+    return (str(cfg.get("label") or title.upper()), str(cfg.get("color") or default_color),
+            str(cfg.get("subtitle") or "PART {part}"))
+
+
+def subtitle_for(fmt: str, ep_dir: Path, part: int) -> str:
+    script_path = ep_dir / "script.json"
+    script = json.loads(script_path.read_text(encoding="utf-8")) if script_path.is_file() else {}
+    return fmt.format(part=part, title=script.get("title", ""), end_card=script.get("end_card", "")).upper()
 
 
 def text_color_for(hex_color: str) -> str:
@@ -59,7 +71,7 @@ def fit_font(draw: ImageDraw.ImageDraw, text: str, max_w: int, start: int) -> Im
     return font(size)
 
 
-def make_cover(image_path: Path, label: str, color: str, part: int) -> Image.Image:
+def make_cover(image_path: Path, label: str, color: str, subtitle: str) -> Image.Image:
     img = ImageOps.fit(Image.open(image_path).convert("RGB"), (W, H))
     # Darken the middle band slightly so the label pops on any background.
     shade = Image.new("L", (1, H), 0)
@@ -81,9 +93,9 @@ def make_cover(image_path: Path, label: str, color: str, part: int) -> Image.Ima
     draw.rounded_rectangle([box_x, box_y, box_x + box_w, box_y + box_h], radius=28, fill=color)
     draw.text((W / 2, box_y + pad_y - l_top), label, font=f_label, fill=text_color_for(color), anchor="ms")
 
-    # Part number below in white with a dark outline, plus a thin underline in the series color.
-    part_text = f"PART {part}"
-    f_part = font(210)
+    # Subtitle (normally "PART N") below in white with a dark outline, plus a thin underline in the series color.
+    part_text = subtitle
+    f_part = fit_font(draw, part_text, W - 120, 210)
     part_y = box_y + box_h + 50
     draw.text((W / 2, part_y), part_text, font=f_part, fill="white", anchor="mt",
               stroke_width=10, stroke_fill="black")
@@ -107,7 +119,7 @@ def main() -> None:
     for sdir in dirs:
         if not (sdir / "series.yaml").is_file():
             continue
-        label, color = series_style(sdir)
+        label, color, subtitle_fmt = series_style(sdir)
         for ep in sorted((sdir / "episodes").glob("ep[0-9]*")):
             n = int(ep.name[2:])
             if args.episode and n != args.episode:
@@ -115,10 +127,11 @@ def main() -> None:
             hook = ep / "images" / "01.png"
             if not hook.is_file() or (not args.all and not (ep / "final.mp4").is_file()):
                 continue
-            cover = make_cover(hook, label, color, n)
+            subtitle = subtitle_for(subtitle_fmt, ep, n)
+            cover = make_cover(hook, label, color, subtitle)
             cover.save(ep / "cover.png")
             cover.save(out_dir / f"{sdir.name}-{ep.name}.png")
-            print(f"{sdir.name}/{ep.name}: {label} · PART {n}")
+            print(f"{sdir.name}/{ep.name}: {label} · {subtitle}")
             made += 1
     if not made:
         sys.exit("No finished episodes found.")
